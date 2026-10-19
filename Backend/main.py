@@ -34,3 +34,13 @@ def read_jamaah_haji(session: Session = Depends(get_session)):
     # Mengambil semua data jamaah haji dari database
     jamaah_haji = session.exec(select(JamaahHaji)).all()
     return jamaah_haji
+
+@app.get("/spk-result")
+def read_spk_result(session: Session = Depends(get_session)):
+    from spk_profile_matching import proses_spk
+    jamaah_list = session.exec(select(JamaahHaji)).all()
+    if not jamaah_list:
+        return {"ahp_weights": {}, "rankings": []}
+    
+    # Proses SPK menggunakan AHP dan Profile Matching
+    return proses_spk(jamaah_list)
