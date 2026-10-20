@@ -19,8 +19,56 @@ export async function fetchJamaahHaji() {
 }
 
 /**
- * Fetch SPK calculation results (AHP weights + rankings).
+ * Fetch jamaah list with C1-C6 conversion skala appended.
  */
+export async function fetchJamaahKonversi() {
+  const res = await api.get('/jamaah-haji/konversi');
+  return res.data;
+}
+
+/**
+ * Create a single jamaah record.
+ */
+export async function createJamaah(body) {
+  const res = await api.post('/jamaah-haji', body);
+  return res.data;
+}
+
+/**
+ * Update a jamaah record by no_porsi.
+ */
+export async function updateJamaah(noPorsi, body) {
+  const res = await api.put(`/jamaah-haji/${encodeURIComponent(noPorsi)}`, body);
+  return res.data;
+}
+
+/**
+ * Delete a single jamaah by no_porsi.
+ */
+export async function deleteJamaah(noPorsi) {
+  await api.delete(`/jamaah-haji/${encodeURIComponent(noPorsi)}`);
+}
+
+/**
+ * Delete ALL jamaah records.
+ */
+export async function deleteAllJamaah() {
+  await api.delete('/jamaah-haji');
+}
+
+/**
+ * Upload an Excel file (.xlsx) of jamaah data.
+ * @param {File} file — the File object from an <input type="file">
+ */
+export async function uploadJamaahExcel(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await api.post('/jamaah-haji/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data;
+}
+
 export async function fetchSpkResult() {
   const res = await api.get('/spk-result');
   return res.data;
@@ -82,4 +130,50 @@ export async function fetchDashboardStats() {
   }
 }
 
+
+// ─── Kriteria ───────────────────────────────────────────────────────────────
+
+/** Fetch all criteria with their sub-criteria. */
+export async function fetchKriteria() {
+  const res = await api.get('/kriteria');
+  return res.data;
+}
+
+/** Create a new criterion. */
+export async function createKriteria(body) {
+  const res = await api.post('/kriteria', body);
+  return res.data;
+}
+
+/** Update an existing criterion by id. */
+export async function updateKriteria(id, body) {
+  const res = await api.put(`/kriteria/${id}`, body);
+  return res.data;
+}
+
+/** Delete a criterion (also cascades sub-criteria). */
+export async function deleteKriteria(id) {
+  await api.delete(`/kriteria/${id}`);
+}
+
+// ─── Sub-Kriteria ────────────────────────────────────────────────────────────
+
+/** Create a new sub-criterion. */
+export async function createSubKriteria(body) {
+  const res = await api.post('/sub-kriteria', body);
+  return res.data;
+}
+
+/** Update an existing sub-criterion by id. */
+export async function updateSubKriteria(id, body) {
+  const res = await api.put(`/sub-kriteria/${id}`, body);
+  return res.data;
+}
+
+/** Delete a sub-criterion by id. */
+export async function deleteSubKriteria(id) {
+  await api.delete(`/sub-kriteria/${id}`);
+}
+
 export default api;
+

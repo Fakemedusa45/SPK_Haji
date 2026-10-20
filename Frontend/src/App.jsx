@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import Sidebar from './components/layout/Sidebar';
 import DashboardPage from './pages/DashboardPage';
+import KriteriaPage from './pages/KriteriaPage';
+import AlternatifPage from './pages/AlternatifPage';
 import PlaceholderPage from './pages/PlaceholderPage';
 
 export default function App() {
@@ -11,7 +13,9 @@ export default function App() {
       case 'dashboard':
         return <DashboardPage />;
       case 'kriteria':
+        return <KriteriaPage />;
       case 'master':
+        return <AlternatifPage />;
       case 'ahp':
       case 'pm':
       case 'hasil':
@@ -21,6 +25,7 @@ export default function App() {
         return <DashboardPage />;
     }
   };
+
 
   return (
     <>
