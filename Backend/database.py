@@ -9,8 +9,9 @@ engine = create_engine(DATABASE_URL, echo=True)
 
 def create_db_and_tables():
     # Membuat tabel di database berdasarkan skema yang ada di SQLModel
-    from models import JamaahHaji
+    from models import JamaahHaji, Kriteria, SubKriteria  # noqa: F401
     SQLModel.metadata.create_all(engine)
+
 
 def get_session():
     with Session(engine) as session:
