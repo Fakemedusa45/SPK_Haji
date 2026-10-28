@@ -3,6 +3,10 @@ import Sidebar from './components/layout/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import KriteriaPage from './pages/KriteriaPage';
 import AlternatifPage from './pages/AlternatifPage';
+import AhpPage from './pages/AhpPage';
+import ProfileMatchingPage from './pages/ProfileMatchingPage';
+import RankingPage from './pages/RankingPage';
+import EvaluationPage from './pages/EvaluationPage';
 import PlaceholderPage from './pages/PlaceholderPage';
 
 export default function App() {
@@ -17,10 +21,13 @@ export default function App() {
       case 'master':
         return <AlternatifPage />;
       case 'ahp':
+        return <AhpPage />;
       case 'pm':
+        return <ProfileMatchingPage />;
       case 'hasil':
+        return <RankingPage />;
       case 'pengujian':
-        return <PlaceholderPage pageId={activePage} />;
+        return <EvaluationPage />;
       default:
         return <DashboardPage />;
     }

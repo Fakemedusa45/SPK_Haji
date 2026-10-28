@@ -175,5 +175,53 @@ export async function deleteSubKriteria(id) {
   await api.delete(`/sub-kriteria/${id}`);
 }
 
-export default api;
 
+// ─── AHP ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch full AHP computation data for a given model.
+ * @param {'karom'|'karu'} model
+ */
+export async function fetchAhp(model = 'karom') {
+  const res = await api.get('/ahp', { params: { model } });
+  return res.data;
+}
+
+/**
+ * Recompute AHP from a custom pairwise matrix.
+ * @param {{ matrix: number[][], labels: string[], codes: string[], model: string }} body
+ */
+export async function recomputeAhp(body) {
+  const res = await api.post('/ahp/compute', body);
+  return res.data;
+}
+
+// ─── Profile Matching ─────────────────────────────────────────────────────────
+
+/**
+ * Fetch full Profile Matching visualisation data.
+ * @param {'karom'|'karu'} model
+ */
+export async function fetchPm(model = 'karom') {
+  const res = await api.get('/pm', { params: { model } });
+  return res.data;
+}
+
+/**
+ * Recompute Profile Matching with optional custom target.
+ * @param {{ model: string, target?: Record<string,number> }} body
+ */
+export async function computePm(body) {
+  const res = await api.post('/pm/compute', body);
+  return res.data;
+}
+
+// ─── Evaluation ───────────────────────────────────────────────────────────────
+
+/** Fetch full 12-scenario evaluation (Sensitivity + Spearman + Pearson). */
+export async function fetchEvaluation() {
+  const res = await api.get('/evaluation');
+  return res.data;
+}
+
+export default api;
