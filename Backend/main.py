@@ -303,6 +303,71 @@ def read_spk_result(session: Session = Depends(get_session)):
     return proses_spk(jamaah_list)
 
 
+# ─── AHP Visualisasi ──────────────────────────────────────────────────────────
+
+from spk_ahp import get_full_ahp, compute_ahp
+from pydantic import BaseModel
+
+class AhpComputeRequest(BaseModel):
+    matrix: list[list[float]]
+    labels: list[str]
+    codes:  list[str]
+    model:  str = "karom"
+
+@app.get("/ahp")
+def read_ahp(model: str = "karom"):
+    """Return full AHP calculation data for 'karom' (6 criteria) or 'karu' (4 criteria)."""
+    return get_full_ahp(model)
+
+
+@app.post("/ahp/compute")
+def recompute_ahp(body: AhpComputeRequest):
+    """Recompute AHP from a custom pairwise matrix submitted by the user."""
+    n = len(body.matrix)
+    if n != len(body.labels) or n != len(body.codes):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="Matrix size must match labels/codes length")
+    result = compute_ahp(body.matrix)
+    result["labels"] = body.labels
+    result["codes"]  = body.codes
+    result["model"]  = body.model
+    return result
+
+
+# ─── Profile Matching Visualisasi ────────────────────────────────────────────
+
+class PmRequest(BaseModel):
+    model:  str = "karom"
+    target: dict | None = None   # optional override, e.g. {"C1": 5, "C2": 4, ...}
+
+@app.get("/pm")
+def read_pm(model: str = "karom", session: Session = Depends(get_session)):
+    """Return full Profile Matching visualisation data."""
+    from spk_profile_matching import proses_pm
+    jamaah_list = session.exec(select(JamaahHaji)).all()
+    if not jamaah_list:
+        from spk_ahp import get_full_ahp, KAROM_CODES, KARU_CODES
+        codes = KAROM_CODES if model == "karom" else KARU_CODES
+        ahp_data = get_full_ahp(model)
+        return {
+            "model": model,
+            "codes": codes,
+            "labels": ahp_data["labels"],
+            "ahp_weights": {},
+            "target": {c: 5 for c in codes},
+            "gap_bobot_table": {0:5.0, 1:4.5, -1:4.0, 2:3.5, -2:3.0, 3:2.5, -3:2.0, 4:1.5, -4:1.0},
+            "jamaah_results": [],
+        }
+    return proses_pm(jamaah_list, model=model)
+
+
+@app.post("/pm/compute")
+def compute_pm(body: PmRequest, session: Session = Depends(get_session)):
+    """Recompute profile matching with optional custom target."""
+    from spk_profile_matching import proses_pm
+    jamaah_list = session.exec(select(JamaahHaji)).all()
+    return proses_pm(jamaah_list, model=body.model, target=body.target)
+
 # ─── Kriteria CRUD ────────────────────────────────────────────────────────────
 
 @app.get("/kriteria", response_model=List[KriteriaWithSubs])

@@ -50,3 +50,8 @@ CARA MENJALANKAN FRONTEND DAN BACKEND
 7. npm run dev
 
 gunakan git bash
+
+cara push ke github:
+git add .
+git commit -m "commit"
+git push origin main
