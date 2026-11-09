@@ -1,9 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   BarChart3, RefreshCw, RotateCcw, AlertCircle,
-  CheckCircle2, Calculator, Info,
+  CheckCircle2, Calculator, Info, X,
 } from 'lucide-react';
-import { fetchAhp, recomputeAhp } from '../services/api';
+import { fetchAhp, recomputeAhp, resetAhp } from '../services/api';
+
+function Toast({ message, type, onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 3500);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  return (
+    <div className={`kr-toast kr-toast-${type}`}>
+      {type === 'success' ? <CheckCircle2 size={16} /> : type === 'info' ? <Info size={16} /> : <AlertCircle size={16} />}
+      <span>{message}</span>
+      <button className="kr-toast-close" onClick={onClose}><X size={14} /></button>
+    </div>
+  );
+}
 
 /* ============================================================
    CONSTANTS — Expert matrices (Lampiran 3 thesis)
@@ -70,10 +85,12 @@ const pct = n => (typeof n === 'number' ? (n * 100).toFixed(2) + '%' : '—');
 /* ============================================================
    SECTION 1 — Pairwise Comparison Matrix
    ============================================================ */
-function PairwiseMatrix({ matrix, labels, codes, onMatrixChange, onRecalculate, onReset, loading }) {
+function PairwiseMatrix({ matrix, labels, codes, onMatrixChange, onRecalculate, onReset, loading, isDirty }) {
+  if (!matrix || matrix.length !== codes.length) return null;
+
   const n = matrix.length;
   const colSums = Array.from({ length: n }, (_, j) =>
-    matrix.reduce((s, row) => s + row[j], 0)
+    matrix.reduce((s, row) => s + (row[j] || 0), 0)
   );
 
   function handleUpperChange(i, j, val) {
@@ -98,13 +115,18 @@ function PairwiseMatrix({ matrix, labels, codes, onMatrixChange, onRecalculate, 
           </div>
         </div>
         <div className="ahp-matrix-actions">
-          <button className="ahp-btn-reset" onClick={onReset}>
+          {isDirty && (
+            <span style={{ fontSize: '12px', color: '#d97706', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#fef3c7', padding: '4px 8px', borderRadius: '4px' }}>
+              <AlertCircle size={13} /> Belum Disimpan
+            </span>
+          )}
+          <button className="ahp-btn-reset" onClick={onReset} disabled={loading} title="Reset matriks perbandingan ke nilai pakar bawaan (Lampiran 3)">
             <RotateCcw size={14} />
-            Reset ke Matriks Pakar (Lampiran 3)
+            Reset ke Matriks Pakar
           </button>
-          <button className="ahp-btn-recalc" onClick={onRecalculate} disabled={loading}>
+          <button className="ahp-btn-recalc" onClick={onRecalculate} disabled={loading} title="Hitung ulang dan simpan bobot kriteria ke database">
             <RefreshCw size={14} className={loading ? 'ahp-spin' : ''} />
-            Hitung Ulang AHP
+            Hitung Ulang & Simpan AHP
           </button>
         </div>
       </div>
@@ -118,37 +140,41 @@ function PairwiseMatrix({ matrix, labels, codes, onMatrixChange, onRecalculate, 
             </tr>
           </thead>
           <tbody>
-            {matrix.map((row, i) => (
-              <tr key={i}>
-                <td className="ahp-td-label">
-                  <span className={`ahp-code-badge ahp-badge-${codes[i].toLowerCase()}`}>{codes[i]}</span>
-                  <span className="ahp-td-label-name">{labels[i]}</span>
-                </td>
-                {row.map((val, j) => {
-                  const isDiag  = i === j;
-                  const isLower = i > j;
-                  return (
-                    <td key={j} className={`ahp-td ${isDiag ? 'ahp-td-diag' : isLower ? 'ahp-td-lower' : 'ahp-td-upper'}`}>
-                      {isDiag ? (
-                        <span className="ahp-cell-diagonal">1</span>
-                      ) : isLower ? (
-                        <span className="ahp-cell-lower">{fmtFraction(val)}</span>
-                      ) : (
-                        <select
-                          className="ahp-cell-select"
-                          value={Math.round(val)}
-                          onChange={e => handleUpperChange(i, j, Number(e.target.value))}
-                        >
-                          {SAATY_SCALE.map(s => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+            {matrix.map((row, i) => {
+              const code = codes[i] || '';
+              const label = labels[i] || '';
+              return (
+                <tr key={i}>
+                  <td className="ahp-td-label">
+                    <span className={`ahp-code-badge ahp-badge-${code.toLowerCase()}`}>{code}</span>
+                    <span className="ahp-td-label-name">{label}</span>
+                  </td>
+                  {row.map((val, j) => {
+                    const isDiag  = i === j;
+                    const isLower = i > j;
+                    return (
+                      <td key={j} className={`ahp-td ${isDiag ? 'ahp-td-diag' : isLower ? 'ahp-td-lower' : 'ahp-td-upper'}`}>
+                        {isDiag ? (
+                          <span className="ahp-cell-diagonal">1</span>
+                        ) : isLower ? (
+                          <span className="ahp-cell-lower">{fmtFraction(val)}</span>
+                        ) : (
+                          <select
+                            className="ahp-cell-select"
+                            value={Math.round(val)}
+                            onChange={e => handleUpperChange(i, j, Number(e.target.value))}
+                          >
+                            {SAATY_SCALE.map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
             <tr className="ahp-tr-total">
               <td className="ahp-td-label"><strong>Total Kolom</strong></td>
               {colSums.map((cs, j) => (
@@ -166,6 +192,7 @@ function PairwiseMatrix({ matrix, labels, codes, onMatrixChange, onRecalculate, 
    SECTION 2 — Weight Priority Bars
    ============================================================ */
 function WeightBars({ weights, labels, codes }) {
+  if (!weights || weights.length !== codes.length) return null;
   const maxW = Math.max(...weights);
 
   return (
@@ -184,21 +211,25 @@ function WeightBars({ weights, labels, codes }) {
         </div>
       </div>
       <div className="ahp-bars-grid">
-        {weights.map((w, i) => (
-          <div key={i} className="ahp-bar-row">
-            <div className="ahp-bar-label-wrap">
-              <span className={`ahp-code-badge ahp-badge-${codes[i].toLowerCase()}`}>{codes[i]}</span>
-              <span className="ahp-bar-label-name">{labels[i]}</span>
+        {weights.map((w, i) => {
+          const code = codes[i] || '';
+          const label = labels[i] || '';
+          return (
+            <div key={i} className="ahp-bar-row">
+              <div className="ahp-bar-label-wrap">
+                <span className={`ahp-code-badge ahp-badge-${code.toLowerCase()}`}>{code}</span>
+                <span className="ahp-bar-label-name">{label}</span>
+              </div>
+              <div className="ahp-bar-track">
+                <div className="ahp-bar-fill" style={{ width: `${maxW > 0 ? (w / maxW) * 100 : 0}%` }} />
+              </div>
+              <div className="ahp-bar-values">
+                <span className="ahp-bar-pct">{pct(w)}</span>
+                <span className="ahp-bar-exact">{f4(w)}</span>
+              </div>
             </div>
-            <div className="ahp-bar-track">
-              <div className="ahp-bar-fill" style={{ width: `${(w / maxW) * 100}%` }} />
-            </div>
-            <div className="ahp-bar-values">
-              <span className="ahp-bar-pct">{pct(w)}</span>
-              <span className="ahp-bar-exact">{f4(w)}</span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -208,6 +239,7 @@ function WeightBars({ weights, labels, codes }) {
    SECTION 3 — Normalized Matrix Table
    ============================================================ */
 function NormMatrix({ norm, rowSums, weights, labels, codes }) {
+  if (!norm || norm.length !== codes.length) return null;
   return (
     <div className="ahp-card">
       <div className="ahp-card-header">
@@ -234,21 +266,25 @@ function NormMatrix({ norm, rowSums, weights, labels, codes }) {
             </tr>
           </thead>
           <tbody>
-            {norm.map((row, i) => (
-              <tr key={i}>
-                <td className="ahp-td-label">
-                  <span className={`ahp-code-badge ahp-badge-${codes[i].toLowerCase()}`}>{codes[i]}</span>
-                  <span className="ahp-td-label-name">{labels[i]}</span>
-                </td>
-                {row.map((v, j) => (
-                  <td key={j} className={`ahp-td ahp-td-norm ${i === j ? 'ahp-td-diag' : ''}`}>
-                    {f4(v)}
+            {norm.map((row, i) => {
+              const code = codes[i] || '';
+              const label = labels[i] || '';
+              return (
+                <tr key={i}>
+                  <td className="ahp-td-label">
+                    <span className={`ahp-code-badge ahp-badge-${code.toLowerCase()}`}>{code}</span>
+                    <span className="ahp-td-label-name">{label}</span>
                   </td>
-                ))}
-                <td className="ahp-td ahp-td-rowsum">{f4(rowSums[i])}</td>
-                <td className="ahp-td ahp-td-weight"><strong>{f4(weights[i])}</strong></td>
-              </tr>
-            ))}
+                  {row.map((v, j) => (
+                    <td key={j} className={`ahp-td ahp-td-norm ${i === j ? 'ahp-td-diag' : ''}`}>
+                      {f4(v)}
+                    </td>
+                  ))}
+                  <td className="ahp-td ahp-td-rowsum">{f4(rowSums?.[i])}</td>
+                  <td className="ahp-td ahp-td-weight"><strong>{f4(weights?.[i])}</strong></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -324,13 +360,18 @@ function ConsistencyPanel({ n, lambdaMax, CI, RI, CR, consistent }) {
    ============================================================ */
 export default function AhpPage() {
   const [model,   setModel]   = useState('karom');
-  const [matrix,  setMatrix]  = useState(KAROM_EXPERT.map(r => [...r]));
+  const [matrix,  setMatrix]  = useState([]);
+  const [labels,  setLabels]  = useState(KAROM_LABELS);
+  const [codes,   setCodes]   = useState(KAROM_CODES);
   const [result,  setResult]  = useState(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const [toast,   setToast]   = useState(null);
 
-  const labels = model === 'karom' ? KAROM_LABELS : KARU_LABELS;
-  const codes  = model === 'karom' ? KAROM_CODES  : KARU_CODES;
+  function showToast(message, type = 'success') {
+    setToast({ message, type });
+  }
 
   const loadAhp = useCallback(async (mdl) => {
     setLoading(true);
@@ -338,19 +379,27 @@ export default function AhpPage() {
     try {
       const data = await fetchAhp(mdl);
       setMatrix(data.matrix);
+      setLabels(data.labels || (mdl === 'karom' ? KAROM_LABELS : KARU_LABELS));
+      setCodes(data.codes || (mdl === 'karom' ? KAROM_CODES : KARU_CODES));
       setResult(data);
+      setIsDirty(false);
     } catch {
       const fallback = mdl === 'karom'
         ? KAROM_EXPERT.map(r => [...r])
         : KARU_EXPERT.map(r => [...r]);
+      const defLabels = mdl === 'karom' ? KAROM_LABELS : KARU_LABELS;
+      const defCodes  = mdl === 'karom' ? KAROM_CODES  : KARU_CODES;
       setMatrix(fallback);
+      setLabels(defLabels);
+      setCodes(defCodes);
       const local = computeAhpLocal(fallback);
       setResult({
         ...local,
-        labels: mdl === 'karom' ? KAROM_LABELS : KARU_LABELS,
-        codes:  mdl === 'karom' ? KAROM_CODES  : KARU_CODES,
+        labels: defLabels,
+        codes:  defCodes,
         model: mdl,
       });
+      setIsDirty(false);
       setError('Backend tidak dapat dihubungi. Menampilkan hasil perhitungan lokal.');
     } finally {
       setLoading(false);
@@ -358,10 +407,17 @@ export default function AhpPage() {
   }, []);
 
   useEffect(() => {
-    const expert = model === 'karom' ? KAROM_EXPERT.map(r => [...r]) : KARU_EXPERT.map(r => [...r]);
-    setMatrix(expert);
-    loadAhp(model);
-  }, [model, loadAhp]);
+    loadAhp('karom');
+  }, [loadAhp]);
+
+  function handleSwitchModel(nextModel) {
+    if (nextModel === model) return;
+    setModel(nextModel);
+    setMatrix([]);
+    setResult(null);
+    setIsDirty(false);
+    loadAhp(nextModel);
+  }
 
   async function handleRecalculate() {
     setLoading(true);
@@ -369,6 +425,8 @@ export default function AhpPage() {
     try {
       const data = await recomputeAhp({ matrix, labels, codes, model });
       setResult(data);
+      setIsDirty(false);
+      showToast('Matriks dan bobot kriteria berhasil disimpan ke sistem!', 'success');
     } catch {
       const local = computeAhpLocal(matrix);
       setResult({ ...local, labels, codes, model });
@@ -378,17 +436,35 @@ export default function AhpPage() {
     }
   }
 
-  function handleReset() {
-    const expert = model === 'karom' ? KAROM_EXPERT.map(r => [...r]) : KARU_EXPERT.map(r => [...r]);
-    setMatrix(expert);
-    loadAhp(model);
+  async function handleReset() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await resetAhp(model);
+      setMatrix(data.matrix);
+      setLabels(data.labels || (model === 'karom' ? KAROM_LABELS : KARU_LABELS));
+      setCodes(data.codes || (model === 'karom' ? KAROM_CODES : KARU_CODES));
+      setResult(data);
+      setIsDirty(false);
+      showToast('Matriks dan bobot kriteria berhasil di-reset ke nilai pakar (Lampiran 3).', 'info');
+    } catch {
+      loadAhp(model);
+      setIsDirty(false);
+      showToast('Matriks dikembalikan ke nilai pakar.', 'info');
+    } finally {
+      setLoading(false);
+    }
   }
 
   function handleMatrixChange(next) {
     setMatrix(next);
+    setIsDirty(true);
     const local = computeAhpLocal(next);
     setResult(prev => prev ? { ...prev, ...local, matrix: next } : { ...local, labels, codes, model });
   }
+
+  const isMatrixReady = matrix && matrix.length === codes.length;
+  const isResultValid = result && result.weights && result.weights.length === codes.length;
 
   return (
     <div className="page-container">
@@ -411,18 +487,18 @@ export default function AhpPage() {
           <button
             id="ahp-toggle-karom"
             className={`ahp-toggle-btn ${model === 'karom' ? 'active' : ''}`}
-            onClick={() => setModel('karom')}
+            onClick={() => handleSwitchModel('karom')}
           >
             Model KAROM
-            <span className="ahp-toggle-sub">6 Kriteria: C1–C6</span>
+            <span className="ahp-toggle-sub">{model === 'karom' ? `${codes.length} Kriteria` : 'Semua Kriteria'}</span>
           </button>
           <button
             id="ahp-toggle-karu"
             className={`ahp-toggle-btn ${model === 'karu' ? 'active' : ''}`}
-            onClick={() => setModel('karu')}
+            onClick={() => handleSwitchModel('karu')}
           >
             Model KARU
-            <span className="ahp-toggle-sub">4 Kriteria: C1–C4</span>
+            <span className="ahp-toggle-sub">{model === 'karu' ? `${codes.length} Kriteria` : 'Kriteria Regu'}</span>
           </button>
         </div>
       </div>
@@ -436,7 +512,7 @@ export default function AhpPage() {
       )}
 
       {/* Loading skeleton */}
-      {loading && !result && (
+      {loading && !isResultValid && (
         <div className="ahp-loading">
           <div className="loading-spinner" />
           <span className="loading-text">Menghitung AHP…</span>
@@ -445,17 +521,20 @@ export default function AhpPage() {
 
       {/* Sections */}
       <div className="ahp-sections">
-        <PairwiseMatrix
-          matrix={matrix}
-          labels={labels}
-          codes={codes}
-          onMatrixChange={handleMatrixChange}
-          onRecalculate={handleRecalculate}
-          onReset={handleReset}
-          loading={loading}
-        />
+        {isMatrixReady && (
+          <PairwiseMatrix
+            matrix={matrix}
+            labels={labels}
+            codes={codes}
+            onMatrixChange={handleMatrixChange}
+            onRecalculate={handleRecalculate}
+            onReset={handleReset}
+            loading={loading}
+            isDirty={isDirty}
+          />
+        )}
 
-        {result && (
+        {isResultValid && (
           <>
             <WeightBars
               weights={result.weights}
@@ -480,6 +559,15 @@ export default function AhpPage() {
           </>
         )}
       </div>
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }

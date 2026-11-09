@@ -6,8 +6,8 @@ import {
   UserCheck,
   Trophy,
   FlaskConical,
-  Hexagon,
 } from 'lucide-react';
+import logoKemenhaj from '../../assets/logo-kemenhaj.png';
 
 const NAV_ITEMS = [
   {
@@ -61,7 +61,7 @@ export default function Sidebar({ activePage, onNavigate }) {
       <div className="sidebar-header">
         <div className="sidebar-logo">
           <div className="sidebar-logo-icon">
-            <Hexagon size={22} strokeWidth={2.2} />
+            <img src={logoKemenhaj} alt="Logo Kementerian Haji dan Umrah" className="sidebar-logo-img" />
           </div>
           <div className="sidebar-logo-text">
             <h1>Pemilihan KARU &amp; KAROM</h1>
@@ -103,7 +103,7 @@ export default function Sidebar({ activePage, onNavigate }) {
       <div className="sidebar-footer">
         <div className="sidebar-footer-badge">
           <div className="badge-dot" />
-          <span>Kemenag Kutai Kartanegara</span>
+          <span>Kementerian Haji dan Umrah</span>
         </div>
       </div>
     </aside>

@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from typing import List
+import json
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
@@ -8,6 +9,7 @@ from models import (
     JamaahHaji,
     Kriteria, KriteriaCreate, KriteriaRead, KriteriaWithSubs,
     SubKriteria, SubKriteriaCreate, SubKriteriaRead,
+    AhpSetting,
 )
 from spk_ahp import get_ahp_weights
 
@@ -150,28 +152,44 @@ class JamaahCreate(JamaahHaji.__bases__[0]):
 
 @app.get("/jamaah-haji", response_model=List[JamaahHaji])
 def read_jamaah_haji(session: Session = Depends(get_session)):
-    return session.exec(select(JamaahHaji)).all()
+    return session.exec(
+        select(JamaahHaji).order_by(
+            JamaahHaji.rombongan.asc(),
+            JamaahHaji.regu.asc(),
+            JamaahHaji.no_porsi.asc()
+        )
+    ).all()
 
 
 @app.get("/jamaah-haji/konversi")
 def read_jamaah_konversi(session: Session = Depends(get_session)):
-    """Return jamaah list with C1-C6 conversion scores appended."""
+    """Return jamaah list with C1-C6 conversion scores, rombongan, regu, status_aktual."""
     from spk_profile_matching import konversi_ke_nilai, hitung_umur
-    jamaah_list = session.exec(select(JamaahHaji)).all()
+    jamaah_list = session.exec(
+        select(JamaahHaji).order_by(
+            JamaahHaji.rombongan.asc(),
+            JamaahHaji.regu.asc(),
+            JamaahHaji.no_porsi.asc()
+        )
+    ).all()
     result = []
     for j in jamaah_list:
         skala = konversi_ke_nilai(j)
         result.append({
-            "no_porsi": j.no_porsi,
-            "nama": j.nama,
-            "jenis_kelamin": j.jenis_kelamin,
-            "pendidikan": j.pendidikan,
-            "pekerjaan": j.pekerjaan,
-            "status_haji": j.status_haji,
-            "tanggal_lahir": str(j.tanggal_lahir),
-            "kesehatan": j.kesehatan,
-            "usia": hitung_umur(j.tanggal_lahir),
-            "skala": skala,
+            "no_porsi":       j.no_porsi,
+            "nama":           j.nama,
+            "jenis_kelamin":  j.jenis_kelamin,
+            "pendidikan":     j.pendidikan,
+            "pekerjaan":      j.pekerjaan,
+            "status_haji":    j.status_haji,
+            "tanggal_lahir":  str(j.tanggal_lahir),
+            "kesehatan":      j.kesehatan,
+            "usia":           hitung_umur(j.tanggal_lahir),
+            "rombongan":      j.rombongan,
+            "regu":           j.regu,
+            "status_aktual":  j.status_aktual,
+            "nilai_tambahan": j.nilai_tambahan,
+            "skala":          skala,
         })
     return result
 
@@ -212,10 +230,10 @@ def delete_jamaah(no_porsi: str, session: Session = Depends(get_session)):
 @app.delete("/jamaah-haji", status_code=204)
 def delete_all_jamaah(session: Session = Depends(get_session)):
     """Wipe all jamaah records (for re-upload)."""
-    all_j = session.exec(select(JamaahHaji)).all()
-    for j in all_j:
-        session.delete(j)
+    from sqlalchemy import text
+    session.execute(text("DELETE FROM jamaahhaji;"))
     session.commit()
+    return None
 
 
 @app.post("/jamaah-haji/upload", status_code=201)
@@ -224,11 +242,16 @@ async def upload_jamaah_excel(
     session: Session = Depends(get_session),
 ):
     """
-    Bulk-import jamaah haji from an Excel (.xlsx) file.
-    Expected columns (in any order, header row 1):
-      no_porsi, nama, jenis_kelamin, pendidikan, pekerjaan,
-      status_haji, tanggal_lahir (YYYY-MM-DD or Excel date), kesehatan
-    Returns count of imported rows.
+    Bulk-import jamaah haji dari file Excel SISKOHAT/SISKOHATKES (data.xlsx).
+
+    Kolom dibaca berdasarkan INDEX (bukan header name) karena ada kolom tanpa nama:
+      0=No, 1=No Porsi, 2=Nama, 3=Rombongan, 4=Regu,
+      5=Status_Aktual (0-Jamaah/5-KARU/4-KAROM), 6=Kabupaten,
+      7=Jenis_Kelamin, 8=Tanggal_Lahir, 9=Pendidikan,
+      10=Pekerjaan, 11=Status_Haji, 12=Status_Risti
+
+    Data Cleaning: baris dengan '#N/A' atau None di kolom inti (index 7-12) dibuang.
+    Nama jemaah disimpan lengkap sesuai data SISKOHAT.
     """
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Hanya file .xlsx yang didukung")
@@ -240,64 +263,111 @@ async def upload_jamaah_excel(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Gagal membaca file Excel: {e}")
 
-    # Read header row
-    headers = [str(cell.value).strip().lower() if cell.value else "" for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+    # Helper — deteksi nilai kosong/tidak valid
+    def _is_missing(v) -> bool:
+        if v is None:
+            return True
+        s = str(v).strip()
+        return s in ("#N/A", "", "None", "nan", "NaN", "N/A")
 
-    REQUIRED = {"no_porsi", "nama", "jenis_kelamin", "pendidikan",
-                "pekerjaan", "status_haji", "tanggal_lahir", "kesehatan"}
-    missing = REQUIRED - set(headers)
-    if missing:
-        raise HTTPException(status_code=422, detail=f"Kolom tidak ditemukan: {missing}")
-
-    idx = {h: i for i, h in enumerate(headers)}
-
-    imported = 0
-    skipped = 0
-    errors = []
+    imported          = 0
+    skipped_incomplete = 0
+    skipped_duplicate  = 0
+    errors            = []
 
     for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        # Skip completely blank rows
+        if all(v is None for v in row[:13]):
+            continue
+
         try:
-            no_porsi = str(row[idx["no_porsi"]]).strip() if row[idx["no_porsi"]] is not None else None
-            if not no_porsi or no_porsi == "None":
-                continue  # skip empty rows
+            # ── Read by column index ──────────────────────────────────────
+            no_porsi_raw  = row[1]
+            nama_raw      = row[2]
+            rombongan_raw = row[3]
+            regu_raw      = row[4]
+            status_aktual = str(row[5]).strip() if row[5] is not None else "0-Jamaah"
+            # col 6 = Kabupaten — skipped
+            jenis_kelamin = row[7]
+            tanggal_lahir = row[8]
+            pendidikan    = row[9]
+            pekerjaan     = row[10]
+            status_haji   = row[11]
+            status_risti  = row[12]
 
-            # Parse tanggal_lahir — may be a date object or string
-            tl = row[idx["tanggal_lahir"]]
-            if isinstance(tl, (date_type,)):
-                tgl = tl
-            elif hasattr(tl, "date"):  # datetime
-                tgl = tl.date()
+            # ── Data Cleaning: drop incomplete rows ───────────────────────
+            core = [jenis_kelamin, tanggal_lahir, pendidikan,
+                    pekerjaan, status_haji, status_risti]
+            if any(_is_missing(v) for v in core):
+                skipped_incomplete += 1
+                continue
+
+            # ── No Porsi & Nama Lengkap ───────────────────────────────────
+            if _is_missing(no_porsi_raw):
+                continue
+            no_porsi = str(no_porsi_raw).strip()
+            nama_full = str(nama_raw).strip() if nama_raw else "UNKNOWN"
+
+            # ── Parse tanggal_lahir ───────────────────────────────────────
+            if isinstance(tanggal_lahir, date_type):
+                tgl = tanggal_lahir
+            elif hasattr(tanggal_lahir, "date"):
+                tgl = tanggal_lahir.date()
             else:
-                tgl = date_type.fromisoformat(str(tl).strip())
+                tgl = date_type.fromisoformat(str(tanggal_lahir).strip())
 
-            # Skip duplicate no_porsi
+            # ── Skip duplicate ────────────────────────────────────────────
             if session.get(JamaahHaji, no_porsi):
-                skipped += 1
+                skipped_duplicate += 1
                 continue
 
             j = JamaahHaji(
                 no_porsi=no_porsi,
-                nama=str(row[idx["nama"]]).strip(),
-                jenis_kelamin=str(row[idx["jenis_kelamin"]]).strip(),
-                pendidikan=str(row[idx["pendidikan"]]).strip(),
-                pekerjaan=str(row[idx["pekerjaan"]]).strip(),
-                status_haji=str(row[idx["status_haji"]]).strip(),
+                nama=nama_full,
+                jenis_kelamin=str(jenis_kelamin).strip(),
+                pendidikan=str(pendidikan).strip(),
+                pekerjaan=str(pekerjaan).strip(),
+                status_haji=str(status_haji).strip(),
                 tanggal_lahir=tgl,
-                kesehatan=str(row[idx["kesehatan"]]).strip(),
+                kesehatan=str(status_risti).strip(),   # Status Risti → field kesehatan
+                rombongan=int(rombongan_raw) if rombongan_raw is not None else None,
+                regu=int(regu_raw) if regu_raw is not None else None,
+                status_aktual=status_aktual,
             )
             session.add(j)
             imported += 1
+
         except Exception as e:
             errors.append(f"Baris {row_num}: {e}")
 
     session.commit()
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+    total_raw = imported + skipped_incomplete + skipped_duplicate + len(errors)
+    return {
+        "imported":           imported,
+        "skipped":            skipped_duplicate,          # backward compat
+        "skipped_incomplete": skipped_incomplete,
+        "skipped_duplicate":  skipped_duplicate,
+        "errors":             errors,
+        "preprocessing_summary": {
+            "total_baris_mentah":        total_raw,
+            "data_tidak_lengkap_dibuang": skipped_incomplete,
+            "data_duplikat_dilewati":    skipped_duplicate,
+            "data_bersih_siap_hitung":   imported,
+        },
+    }
 
 
 @app.get("/spk-result")
 def read_spk_result(session: Session = Depends(get_session)):
     from spk_profile_matching import proses_spk
-    jamaah_list = session.exec(select(JamaahHaji)).all()
+    jamaah_list = session.exec(
+        select(JamaahHaji).order_by(
+            JamaahHaji.rombongan.asc(),
+            JamaahHaji.regu.asc(),
+            JamaahHaji.no_porsi.asc()
+        )
+    ).all()
     if not jamaah_list:
         return {"ahp_weights": {}, "rankings": []}
     return proses_spk(jamaah_list)
@@ -315,14 +385,23 @@ class AhpComputeRequest(BaseModel):
     model:  str = "karom"
 
 @app.get("/ahp")
-def read_ahp(model: str = "karom"):
-    """Return full AHP calculation data for 'karom' (6 criteria) or 'karu' (4 criteria)."""
-    return get_full_ahp(model)
+def read_ahp(model: str = "karom", session: Session = Depends(get_session)):
+    """Return full AHP calculation data for 'karom' or 'karu' dynamically incorporating any custom criteria and saved matrix."""
+    from spk_ahp import get_dynamic_ahp
+    criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
+    setting = session.get(AhpSetting, model)
+    saved_matrix = None
+    if setting and setting.matrix_json:
+        try:
+            saved_matrix = json.loads(setting.matrix_json)
+        except Exception:
+            saved_matrix = None
+    return get_dynamic_ahp(model, criteria_list, saved_matrix=saved_matrix)
 
 
 @app.post("/ahp/compute")
-def recompute_ahp(body: AhpComputeRequest):
-    """Recompute AHP from a custom pairwise matrix submitted by the user."""
+def recompute_ahp(body: AhpComputeRequest, session: Session = Depends(get_session)):
+    """Recompute AHP from a custom pairwise matrix submitted by the user and persist matrix and weights."""
     n = len(body.matrix)
     if n != len(body.labels) or n != len(body.codes):
         from fastapi import HTTPException
@@ -331,7 +410,43 @@ def recompute_ahp(body: AhpComputeRequest):
     result["labels"] = body.labels
     result["codes"]  = body.codes
     result["model"]  = body.model
+
+    # 1. Save matrix and weights into ahp_setting table so it persists across visits
+    setting = session.get(AhpSetting, body.model)
+    if not setting:
+        setting = AhpSetting(model=body.model, matrix_json=json.dumps(body.matrix), weights_json=json.dumps(result["weights"]))
+    else:
+        setting.matrix_json = json.dumps(body.matrix)
+        setting.weights_json = json.dumps(result["weights"])
+    session.add(setting)
+
+    # 2. Persist updated weights into kriteria table
+    for idx, c in enumerate(body.codes):
+        kr = session.exec(select(Kriteria).where(Kriteria.kode == c)).first()
+        if kr:
+            kr.bobot = result["weights"][idx]
+            session.add(kr)
+    session.commit()
     return result
+
+
+@app.post("/ahp/reset")
+def reset_ahp(model: str = "karom", session: Session = Depends(get_session)):
+    """Reset AHP matrix for the given model back to the default expert matrix."""
+    setting = session.get(AhpSetting, model)
+    if setting:
+        session.delete(setting)
+        session.commit()
+    from spk_ahp import get_dynamic_ahp
+    criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
+    data = get_dynamic_ahp(model, criteria_list, saved_matrix=None)
+    for idx, c in enumerate(data["codes"]):
+        kr = session.exec(select(Kriteria).where(Kriteria.kode == c)).first()
+        if kr:
+            kr.bobot = data["weights"][idx]
+            session.add(kr)
+    session.commit()
+    return data
 
 
 # ─── Profile Matching Visualisasi ────────────────────────────────────────────
@@ -344,29 +459,57 @@ class PmRequest(BaseModel):
 def read_pm(model: str = "karom", session: Session = Depends(get_session)):
     """Return full Profile Matching visualisation data."""
     from spk_profile_matching import proses_pm
-    jamaah_list = session.exec(select(JamaahHaji)).all()
+    jamaah_list = session.exec(
+        select(JamaahHaji).order_by(
+            JamaahHaji.rombongan.asc(),
+            JamaahHaji.regu.asc(),
+            JamaahHaji.no_porsi.asc()
+        )
+    ).all()
+    criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
+    setting = session.get(AhpSetting, model)
+    saved_matrix = None
+    if setting and setting.matrix_json:
+        try:
+            saved_matrix = json.loads(setting.matrix_json)
+        except Exception:
+            saved_matrix = None
     if not jamaah_list:
-        from spk_ahp import get_full_ahp, KAROM_CODES, KARU_CODES
-        codes = KAROM_CODES if model == "karom" else KARU_CODES
-        ahp_data = get_full_ahp(model)
+        from spk_ahp import get_dynamic_ahp
+        ahp_data = get_dynamic_ahp(model, criteria_list, saved_matrix=saved_matrix)
+        codes = ahp_data["codes"]
         return {
             "model": model,
             "codes": codes,
             "labels": ahp_data["labels"],
-            "ahp_weights": {},
+            "ahp_weights": {codes[i]: ahp_data["weights"][i] for i in range(len(codes))},
             "target": {c: 5 for c in codes},
             "gap_bobot_table": {0:5.0, 1:4.5, -1:4.0, 2:3.5, -2:3.0, 3:2.5, -3:2.0, 4:1.5, -4:1.0},
             "jamaah_results": [],
         }
-    return proses_pm(jamaah_list, model=model)
+    return proses_pm(jamaah_list, model=model, criteria_list=criteria_list, saved_matrix=saved_matrix)
 
 
 @app.post("/pm/compute")
 def compute_pm(body: PmRequest, session: Session = Depends(get_session)):
     """Recompute profile matching with optional custom target."""
     from spk_profile_matching import proses_pm
-    jamaah_list = session.exec(select(JamaahHaji)).all()
-    return proses_pm(jamaah_list, model=body.model, target=body.target)
+    jamaah_list = session.exec(
+        select(JamaahHaji).order_by(
+            JamaahHaji.rombongan.asc(),
+            JamaahHaji.regu.asc(),
+            JamaahHaji.no_porsi.asc()
+        )
+    ).all()
+    criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
+    setting = session.get(AhpSetting, body.model)
+    saved_matrix = None
+    if setting and setting.matrix_json:
+        try:
+            saved_matrix = json.loads(setting.matrix_json)
+        except Exception:
+            saved_matrix = None
+    return proses_pm(jamaah_list, model=body.model, target=body.target, criteria_list=criteria_list, saved_matrix=saved_matrix)
 
 # ─── Kriteria CRUD ────────────────────────────────────────────────────────────
 
@@ -388,7 +531,22 @@ def list_kriteria(session: Session = Depends(get_session)):
 
 @app.post("/kriteria", response_model=KriteriaRead, status_code=201)
 def create_kriteria(body: KriteriaCreate, session: Session = Depends(get_session)):
-    kr = Kriteria(**body.model_dump())
+    existing = session.exec(select(Kriteria)).all()
+    existing_codes = {k.kode.upper() for k in existing}
+    kode = (body.kode or "").strip().upper()
+    if not kode or kode in existing_codes:
+        import re
+        nums = []
+        for k in existing:
+            m = re.match(r"C(\d+)", k.kode, re.IGNORECASE)
+            if m:
+                nums.append(int(m.group(1)))
+        next_num = (max(nums) + 1) if nums else 1
+        kode = f"C{next_num}"
+
+    kr_data = body.model_dump()
+    kr_data["kode"] = kode
+    kr = Kriteria(**kr_data)
     session.add(kr)
     session.commit()
     session.refresh(kr)
@@ -452,3 +610,42 @@ def delete_sub_kriteria(sub_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Sub-Kriteria tidak ditemukan")
     session.delete(sub)
     session.commit()
+
+
+# ─── Pengujian Sistem — Sensitivity + Spearman + Pearson ─────────────────────
+
+@app.get("/evaluation")
+def read_evaluation(session: Session = Depends(get_session)):
+    """
+    Run 12-scenario sensitivity analysis (±1 / ±2 on each of C1–C6 for KAROM),
+    compute Spearman (rank stability) and Pearson (score linearity) correlations,
+    and return the full result including per-scenario drill-down detail.
+    Subbab 3.8 — Persamaan 2.9 (S%) & Persamaan 2.10 (rₛ).
+    """
+    from spk_evaluation import run_evaluation
+    jamaah_list = session.exec(
+        select(JamaahHaji).order_by(
+            JamaahHaji.rombongan.asc(),
+            JamaahHaji.regu.asc(),
+            JamaahHaji.no_porsi.asc()
+        )
+    ).all()
+    if not jamaah_list:
+        return {
+            "model": "karom",
+            "codes": [],
+            "labels": [],
+            "base_weights": {},
+            "n_scenarios": 0,
+            "scenarios": [],
+            "summary": {
+                "avg_sensitivity": 0.0,
+                "avg_spearman": 0.0,
+                "avg_pearson": 0.0,
+                "interp_spearman": "—",
+                "interp_pearson": "—",
+                "robust": False,
+                "model": "karom",
+            },
+        }
+    return run_evaluation(jamaah_list)

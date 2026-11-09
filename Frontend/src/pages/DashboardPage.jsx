@@ -44,21 +44,21 @@ function MetricCard({ icon: Icon, iconColor, value, label, sub }) {
 
 function HealthChart({ data, total }) {
   const categories = [
-    { key: 'Tidak Risiko Tinggi', color: 'green', label: 'Tidak Risiko Tinggi' },
-    { key: 'Risiko Tinggi Ringan', color: 'yellow', label: 'Risiko Tinggi Ringan' },
-    { key: 'Risiko Tinggi Sedang', color: 'orange', label: 'Risiko Tinggi Sedang' },
-    { key: 'Risiko Tinggi Berat', color: 'red', label: 'Risiko Tinggi Berat' },
+    { key: 'Tidak Risti', altKey: 'Tidak Risiko Tinggi', color: 'green', label: 'Tidak Risti' },
+    { key: 'Risti Ringan', altKey: 'Risiko Tinggi Ringan', color: 'yellow', label: 'Risti Ringan' },
+    { key: 'Risti Sedang', altKey: 'Risiko Tinggi Sedang', color: 'orange', label: 'Risti Sedang' },
+    { key: 'Risti Berat', altKey: 'Risiko Tinggi Berat', color: 'red', label: 'Risti Berat' },
   ];
 
   return (
     <div className="chart-card">
       <div className="chart-card-header">
-        <span className="chart-card-title">Kondisi Kesehatan Jemaah</span>
+        <span className="chart-card-title">Kondisi Kesehatan Jemaah (Status Risti)</span>
         <span className="chart-card-badge">{total} Jemaah</span>
       </div>
       <div className="health-chart">
         {categories.map((cat) => {
-          const count = data[cat.key] || 0;
+          const count = (data?.[cat.key] ?? data?.[cat.altKey]) || 0;
           const pct = total > 0 ? (count / total) * 100 : 0;
           return (
             <div className="health-bar-row" key={cat.key}>

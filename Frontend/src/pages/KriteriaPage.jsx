@@ -26,12 +26,24 @@ function kodeBadge(kode) {
   const colors = {
     C1: 'kr-badge-c1', C2: 'kr-badge-c2', C3: 'kr-badge-c3',
     C4: 'kr-badge-c4', C5: 'kr-badge-c5', C6: 'kr-badge-c6',
+    C7: 'kr-badge-c7', C8: 'kr-badge-c8', C9: 'kr-badge-c9',
   };
   return (
-    <span className={`kr-kode-badge ${colors[kode] || 'kr-badge-c1'}`}>
+    <span className={`kr-kode-badge ${colors[kode] || 'kr-badge-c7'}`}>
       {kode}
     </span>
   );
+}
+
+function getNextKode(kriterias) {
+  const nums = (kriterias || [])
+    .map(k => {
+      const m = (k.kode || '').match(/C(\d+)/i);
+      return m ? parseInt(m[1], 10) : 0;
+    })
+    .filter(n => !isNaN(n));
+  const max = nums.length > 0 ? Math.max(...nums) : 0;
+  return `C${max + 1}`;
 }
 
 /* ============================================================
@@ -57,12 +69,12 @@ function Toast({ message, type, onClose }) {
    MODAL — Add/Edit Kriteria
    ============================================================ */
 
-function KriteriaModal({ initial, onSave, onClose, loading }) {
+function KriteriaModal({ initial, kriterias, onSave, onClose, loading }) {
   const isEdit = !!initial;
+  const autoKode = isEdit ? initial.kode : getNextKode(kriterias);
   const [form, setForm] = useState({
-    kode:  initial?.kode  || '',
+    kode:  autoKode,
     nama:  initial?.nama  || '',
-    bobot: initial?.bobot != null ? String(initial.bobot) : '',
     scope: initial?.scope || 'KAROM & KARU',
   });
 
@@ -73,7 +85,7 @@ function KriteriaModal({ initial, onSave, onClose, loading }) {
     const payload = {
       kode:  form.kode.trim(),
       nama:  form.nama.trim(),
-      bobot: form.bobot !== '' ? parseFloat(form.bobot) : null,
+      bobot: initial?.bobot ?? null,   // preserve existing AHP weight, never override
       scope: form.scope,
     };
     onSave(payload);
@@ -90,14 +102,11 @@ function KriteriaModal({ initial, onSave, onClose, loading }) {
         <form onSubmit={handleSubmit} className="kr-modal-body">
           <div className="kr-form-row">
             <div className="kr-form-group">
-              <label>Kode Kriteria <span className="req">*</span></label>
-              <input
-                className="kr-input"
-                value={form.kode}
-                onChange={e => set('kode', e.target.value)}
-                placeholder="C1"
-                required
-              />
+              <label>Kode Kriteria</label>
+              <div className="kr-auto-code-box">
+                <span className="kr-kode-badge kr-badge-c1" style={{ fontSize: '13px', padding: '4px 10px' }}>{form.kode}</span>
+                {!isEdit && <span className="kr-auto-code-hint">Otomatis oleh sistem</span>}
+              </div>
             </div>
             <div className="kr-form-group" style={{ flex: 2 }}>
               <label>Nama Kriteria <span className="req">*</span></label>
@@ -105,25 +114,24 @@ function KriteriaModal({ initial, onSave, onClose, loading }) {
                 className="kr-input"
                 value={form.nama}
                 onChange={e => set('nama', e.target.value)}
-                placeholder="Usia"
+                placeholder="Contoh: Pengalaman Organisasi"
                 required
+                autoFocus
               />
             </div>
           </div>
 
           <div className="kr-form-row">
+            {/* Bobot read-only */}
             <div className="kr-form-group">
-              <label>Bobot Prioritas (W<sub>j</sub>)</label>
-              <input
-                className="kr-input"
-                type="number"
-                step="0.0001"
-                min="0"
-                max="1"
-                value={form.bobot}
-                onChange={e => set('bobot', e.target.value)}
-                placeholder="0.3512"
-              />
+              <label>
+                Bobot Prioritas (W<sub>j</sub>)
+              </label>
+              <div className="kr-input-ahp-readonly">
+                <span className="kr-input-ahp-val">
+                  {initial?.bobot != null ? initial.bobot.toFixed(6) : '—'}
+                </span>
+              </div>
             </div>
             <div className="kr-form-group" style={{ flex: 2 }}>
               <label>Cakupan <span className="req">*</span></label>
@@ -368,7 +376,7 @@ function KriteriaCard({ kr, isOpen, onToggle, onEdit, onDelete, onAddSub, onEdit
 
         <div className="kr-card-right">
           <div className="kr-bobot-block">
-            <span className="kr-bobot-label">Bobot Prioritas</span>
+            <span className="kr-bobot-label">Bobot (W<sub>j</sub>)</span>
             <span className="kr-bobot-value">
               {kr.bobot != null ? kr.bobot.toFixed(4) : '—'}
             </span>
@@ -434,13 +442,20 @@ function RingkasanCard({ kriterias }) {
         </div>
         <div className="kr-stat-divider" />
         <div className="kr-stat-item">
-          <span className="kr-stat-label">Total Bobot</span>
+          <span className="kr-stat-label">Σ Bobot Prioritas</span>
           <span className={`kr-stat-value ${bobotOk ? 'bobot-ok' : 'bobot-warn'}`}>
             {totalBobot.toFixed(4)}&nbsp;
             {bobotOk
               ? <CheckCircle2 size={13} />
               : <AlertCircle size={13} />
             }
+          </span>
+        </div>
+        <div className="kr-stat-divider" />
+        <div className="kr-stat-item">
+          <span className="kr-stat-label">Penetapan Bobot</span>
+          <span className="kr-stat-value kr-stat-ahp-src">
+            Matriks Pakar
           </span>
         </div>
       </div>
@@ -458,8 +473,9 @@ function TipBanner() {
       <div className="kr-tip-icon"><Info size={14} /></div>
       <p>
         Parameter kriteria di bawah digunakan dalam proses seleksi <strong>KAROM</strong> (C1–C6) dan&nbsp;
-        <strong>KARU</strong> (C1–C4). Bobot prioritas dihitung menggunakan metode&nbsp;
-        <strong>Analytical Hierarchy Process (AHP)</strong> dan dapat diperbarui jika regulasi haji berubah.
+        <strong>KARU</strong> (C1–C4). <strong>Bobot prioritas (W<sub>j</sub>)</strong> ditetapkan secara
+        otomatis berdasarkan matriks perbandingan berpasangan dari pakar — bobot <em>tidak dapat diubah secara manual</em> di
+        halaman ini.
       </p>
     </div>
   );
@@ -667,6 +683,7 @@ export default function KriteriaPage() {
       {krModal && (
         <KriteriaModal
           initial={krModal.data}
+          kriterias={kriterias}
           onSave={handleSaveKriteria}
           onClose={() => setKrModal(null)}
           loading={mutLoading}

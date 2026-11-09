@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Trophy, Crown, Users, ArrowUpDown, SlidersHorizontal,
   Medal, Star, ChevronDown, AlertCircle, Info, Award,
@@ -14,6 +14,7 @@ const ROMB_SIZE  = 44;   // ~4 regu per rombongan
 const BADGE_COLORS = {
   C1: 'ahp-badge-c1', C2: 'ahp-badge-c2', C3: 'ahp-badge-c3',
   C4: 'ahp-badge-c4', C5: 'ahp-badge-c5', C6: 'ahp-badge-c6',
+  C7: 'ahp-badge-c7', C8: 'ahp-badge-c8', C9: 'ahp-badge-c9',
 };
 
 const f4 = n => (typeof n === 'number' ? n.toFixed(4) : '—');
@@ -46,7 +47,7 @@ function RankIcon({ rank }) {
 /* ============================================================
    TOP SUMMARY CARDS
    ============================================================ */
-function SummaryCards({ karomTop, karuTop, total, model }) {
+function SummaryCards({ karomTop, karuTop, total, model, effectiveRomb, effectiveRegu }) {
   const code1 = karomTop ? toKode(karomTop._origIdx ?? 0) : '—';
   const code2 = karuTop  ? toKode(karuTop._origIdx  ?? 0) : '—';
 
@@ -56,7 +57,7 @@ function SummaryCards({ karomTop, karuTop, total, model }) {
       <div className="rk-summary-card rk-card-karom">
         <div className="rk-summary-tag">
           <Crown size={14} />
-          Rekomendasi KAROM
+          Rekomendasi KAROM {effectiveRomb ? `(Rombongan ${effectiveRomb})` : ''}
         </div>
         <div className="rk-summary-name">{karomTop?.nama ?? 'Belum ada data'}</div>
         <div className="rk-summary-meta">
@@ -67,14 +68,16 @@ function SummaryCards({ karomTop, karuTop, total, model }) {
             </span>
           )}
         </div>
-        <div className="rk-summary-sub">Ketua Rombongan · 6 Kriteria C1–C6</div>
+        <div className="rk-summary-sub">
+          {effectiveRomb ? `Peringkat #1 di Rombongan ${effectiveRomb} · 6 Kriteria` : 'Ketua Rombongan · 6 Kriteria C1–C6'}
+        </div>
       </div>
 
       {/* KARU winner */}
       <div className="rk-summary-card rk-card-karu">
         <div className="rk-summary-tag">
           <Star size={14} />
-          Rekomendasi KARU
+          Rekomendasi KARU {effectiveRegu ? `(Regu ${effectiveRegu})` : ''}
         </div>
         <div className="rk-summary-name">{karuTop?.nama ?? 'Belum ada data'}</div>
         <div className="rk-summary-meta">
@@ -85,20 +88,22 @@ function SummaryCards({ karomTop, karuTop, total, model }) {
             </span>
           )}
         </div>
-        <div className="rk-summary-sub">Ketua Regu · 4 Kriteria C1–C4</div>
+        <div className="rk-summary-sub">
+          {effectiveRegu ? `Peringkat #1 di Regu ${effectiveRegu} · 4 Kriteria` : 'Ketua Regu · 4 Kriteria C1–C4'}
+        </div>
       </div>
 
       {/* Total */}
       <div className="rk-summary-card rk-card-total">
         <div className="rk-summary-tag">
           <Users size={14} />
-          Total Dievaluasi
+          Total Anggota
         </div>
         <div className="rk-summary-big-num">{total}</div>
         <div className="rk-summary-sub">
           {model === 'karom'
-            ? 'Jemaah dalam Rombongan · Skala KAROM'
-            : 'Jemaah dalam Regu · Skala KARU'}
+            ? `Jemaah dalam Rombongan ${effectiveRomb || ''} · Skala KAROM`
+            : `Jemaah dalam Regu ${effectiveRegu || ''} · Skala KARU`}
         </div>
       </div>
     </div>
@@ -111,6 +116,7 @@ function SummaryCards({ karomTop, karuTop, total, model }) {
 function Toolbar({
   model, setModel,
   reguList, selectedRegu, setSelectedRegu,
+  rombList, selectedRomb, setSelectedRomb,
   ascending, setAscending,
   limitN, setLimitN,
 }) {
@@ -119,7 +125,7 @@ function Toolbar({
 
   return (
     <div className="rk-toolbar">
-      {/* Left: mode toggle + regu selector */}
+      {/* Left: mode toggle + rombongan/regu selector */}
       <div className="rk-toolbar-left">
         <div className="rk-mode-toggle">
           <button
@@ -142,16 +148,33 @@ function Toolbar({
           </button>
         </div>
 
-        {model === 'karu' && reguList.length > 0 && (
+        {/* Filter Rombongan untuk KAROM */}
+        {model === 'karom' && rombList?.length > 0 && (
+          <div className="rk-regu-wrap">
+            <label className="rk-regu-label">Rombongan:</label>
+            <select
+              id="rk-romb-select"
+              className="rk-regu-select"
+              value={selectedRomb || rombList[0]}
+              onChange={e => setSelectedRomb(Number(e.target.value))}
+            >
+              {rombList.map(r => (
+                <option key={r} value={r}>Rombongan {r}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Filter Regu untuk KARU */}
+        {model === 'karu' && reguList?.length > 0 && (
           <div className="rk-regu-wrap">
             <label className="rk-regu-label">Regu:</label>
             <select
               id="rk-regu-select"
               className="rk-regu-select"
-              value={selectedRegu}
+              value={selectedRegu || reguList[0]}
               onChange={e => setSelectedRegu(Number(e.target.value))}
             >
-              <option value={0}>Semua Regu</option>
               {reguList.map(r => (
                 <option key={r} value={r}>Regu {r}</option>
               ))}
@@ -227,7 +250,7 @@ function LeaderboardTable({ rows, codes, labels, ahpWeights, model, origIndexMap
               {codes.map(c => (
                 <th key={c} className="rk-th rk-th-skor">
                   <div className="rk-th-skor-inner">
-                    <span className={`ahp-code-badge ${BADGE_COLORS[c]}`}>{c}</span>
+                    <span className={`ahp-code-badge ${BADGE_COLORS[c] || 'ahp-badge-c7'}`}>{c}</span>
                     <span className="rk-th-skor-label">Skor Wⱼ×Gap</span>
                   </div>
                 </th>
@@ -262,6 +285,12 @@ function LeaderboardTable({ rows, codes, labels, ahpWeights, model, origIndexMap
                   {/* Nama */}
                   <td className="rk-td rk-td-nama">
                     <span className={`rk-nama ${isTop3 ? 'rk-nama-bold' : ''}`}>{row.nama}</span>
+                    {(row.rombongan != null || row.regu != null) && (
+                      <div className="rk-group-tags">
+                        {row.rombongan != null && <span className="rk-group-tag romb">Romb. {row.rombongan}</span>}
+                        {row.regu != null && <span className="rk-group-tag regu">Regu {row.regu}</span>}
+                      </div>
+                    )}
                   </td>
 
                   {/* Skor per kriteria */}
@@ -358,7 +387,7 @@ function BottomPanel({ codes, ahpWeights }) {
               <span className="rk-info-weights-label">Bobot AHP aktif:</span>
               {Object.entries(ahpWeights).map(([c, w]) => (
                 <span key={c} className="rk-info-weight-item">
-                  <span className={`ahp-code-badge ${BADGE_COLORS[c]}`}>{c}</span>
+                  <span className={`ahp-code-badge ${BADGE_COLORS[c] || 'ahp-badge-c7'}`}>{c}</span>
                   {f4(w)}
                 </span>
               ))}
@@ -382,6 +411,7 @@ export default function RankingPage() {
   const [ascending,   setAscending]   = useState(false);
   const [limitN,      setLimitN]      = useState(999);
   const [selectedRegu, setSelectedRegu] = useState(0);        // 0 = all regu
+  const [selectedRomb, setSelectedRomb] = useState(0);        // 0 = all rombongan
 
   /* ── Load both KAROM and KARU for summary cards ── */
   const loadAll = useCallback(async () => {
@@ -417,23 +447,54 @@ export default function RankingPage() {
     });
   }
 
-  /* ── Regu list for KARU filter ── */
-  const reguList = (() => {
-    if (!pmDataKaru?.jamaah_results) return [];
+  /* ── Regu list for KARU filter (actual data: 17–35) ── */
+  const reguList = useMemo(() => {
+    const list = pmDataKaru?.jamaah_results || [];
     const regs = new Set();
-    pmDataKaru.jamaah_results.forEach((_, i) => regs.add(Math.floor(i / REGU_SIZE) + 1));
+    list.forEach(r => { if (r.regu != null) regs.add(r.regu); });
     return [...regs].sort((a, b) => a - b);
-  })();
+  }, [pmDataKaru]);
+
+  /* ── Rombongan list for KAROM filter (actual data: 5–9) ── */
+  const rombList = useMemo(() => {
+    const list = pmData?.jamaah_results || [];
+    const rombs = new Set();
+    list.forEach(r => { if (r.rombongan != null) rombs.add(r.rombongan); });
+    return [...rombs].sort((a, b) => a - b);
+  }, [pmData]);
+
+  // Set default selection when lists become available
+  useEffect(() => {
+    if (rombList.length > 0 && (!selectedRomb || !rombList.includes(selectedRomb))) {
+      setSelectedRomb(rombList[0]);
+    }
+  }, [rombList, selectedRomb]);
+
+  useEffect(() => {
+    if (reguList.length > 0 && (!selectedRegu || !reguList.includes(selectedRegu))) {
+      setSelectedRegu(reguList[0]);
+    }
+  }, [reguList, selectedRegu]);
+
+  const effectiveRomb = selectedRomb || (rombList[0] ?? 0);
+  const effectiveRegu = selectedRegu || (reguList[0] ?? 0);
 
   /* ── Filter + sort rows ── */
   let rows = [...(activePm?.jamaah_results || [])];
 
-  if (model === 'karu' && selectedRegu > 0) {
-    rows = rows.filter(r => {
-      const origIdx = origIndexMap[r.no_porsi] ?? 0;
-      return Math.floor(origIdx / REGU_SIZE) + 1 === selectedRegu;
-    });
-    // Re-rank within regu
+  if (model === 'karom') {
+    if (effectiveRomb > 0) {
+      rows = rows.filter(r => r.rombongan === effectiveRomb);
+    }
+    // Re-rank within selected rombongan
+    rows.sort((a, b) => b.nilai_akhir - a.nilai_akhir);
+    rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+  } else {
+    // model === 'karu'
+    if (effectiveRegu > 0) {
+      rows = rows.filter(r => r.regu === effectiveRegu);
+    }
+    // Re-rank within selected regu
     rows.sort((a, b) => b.nilai_akhir - a.nilai_akhir);
     rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
   }
@@ -442,9 +503,13 @@ export default function RankingPage() {
   if (limitN < 999) rows = rows.slice(0, limitN);
 
   /* ── Summary data ── */
-  const karomTop = pmData?.jamaah_results?.[0];
-  const karuTop  = pmDataKaru?.jamaah_results?.[0];
-  const total    = activePm?.jamaah_results?.length ?? 0;
+  const karomCandidates = (pmData?.jamaah_results || []).filter(r => r.rombongan === effectiveRomb);
+  const karomTop = [...karomCandidates].sort((a, b) => b.nilai_akhir - a.nilai_akhir)[0] || pmData?.jamaah_results?.[0];
+
+  const karuCandidates = (pmDataKaru?.jamaah_results || []).filter(r => r.regu === effectiveRegu);
+  const karuTop = [...karuCandidates].sort((a, b) => b.nilai_akhir - a.nilai_akhir)[0] || pmDataKaru?.jamaah_results?.[0];
+
+  const total = rows.length;
 
   return (
     <div className="page-container">
@@ -484,13 +549,17 @@ export default function RankingPage() {
             karuTop={karuTop}
             total={total}
             model={model}
+            effectiveRomb={effectiveRomb}
+            effectiveRegu={effectiveRegu}
           />
 
           {/* Toolbar */}
           <Toolbar
-            model={model} setModel={m => { setModel(m); setSelectedRegu(0); }}
+            model={model} setModel={setModel}
             reguList={reguList}
-            selectedRegu={selectedRegu} setSelectedRegu={setSelectedRegu}
+            selectedRegu={selectedRegu || reguList[0] || 0} setSelectedRegu={setSelectedRegu}
+            rombList={rombList}
+            selectedRomb={selectedRomb || rombList[0] || 0} setSelectedRomb={setSelectedRomb}
             ascending={ascending} setAscending={setAscending}
             limitN={limitN} setLimitN={setLimitN}
           />

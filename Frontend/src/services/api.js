@@ -94,18 +94,31 @@ export async function fetchDashboardStats() {
       else female++;
     });
 
-    // Health distribution — map raw values to health risk categories
+    // Health distribution — map raw values to health risk categories (Status Risti)
     const healthMap = {
-      sehat: 'Tidak Risiko Tinggi',
-      'tidak risiko tinggi': 'Tidak Risiko Tinggi',
-      disabilitas: 'Risiko Tinggi Sedang',
-      'risiko tinggi ringan': 'Risiko Tinggi Ringan',
-      'risiko tinggi sedang': 'Risiko Tinggi Sedang',
-      'risiko tinggi berat': 'Risiko Tinggi Berat',
-      'riwayat sakit keras': 'Risiko Tinggi Berat',
+      'tidak risti': 'Tidak Risti',
+      'tidak risiko tinggi': 'Tidak Risti',
+      'sehat': 'Tidak Risti',
+      "istitha'ah": 'Tidak Risti',
+      'istithaah': 'Tidak Risti',
+      'risti ringan': 'Risti Ringan',
+      'risiko tinggi ringan': 'Risti Ringan',
+      'risti sedang': 'Risti Sedang',
+      'risiko tinggi sedang': 'Risti Sedang',
+      'disabilitas': 'Risti Sedang',
+      'perlu pendampingan': 'Risti Sedang',
+      'risti berat': 'Risti Berat',
+      'risiko tinggi berat': 'Risti Berat',
+      'riwayat sakit keras': 'Risti Berat',
+      'resti': 'Risti Berat',
     };
 
     const healthCounts = {
+      'Tidak Risti': 0,
+      'Risti Ringan': 0,
+      'Risti Sedang': 0,
+      'Risti Berat': 0,
+      // Legacy / full-name aliases for compatibility
       'Tidak Risiko Tinggi': 0,
       'Risiko Tinggi Ringan': 0,
       'Risiko Tinggi Sedang': 0,
@@ -114,8 +127,27 @@ export async function fetchDashboardStats() {
 
     jamaahList.forEach((j) => {
       const raw = (j.kesehatan || '').toLowerCase().trim();
-      const category = healthMap[raw] || 'Risiko Tinggi Sedang';
+      let category = healthMap[raw];
+      if (!category) {
+        if (raw.includes('tidak risti') || raw.includes('tidak risiko') || raw.includes('sehat')) {
+          category = 'Tidak Risti';
+        } else if (raw.includes('ringan')) {
+          category = 'Risti Ringan';
+        } else if (raw.includes('sedang')) {
+          category = 'Risti Sedang';
+        } else if (raw.includes('berat')) {
+          category = 'Risti Berat';
+        } else {
+          category = 'Tidak Risti';
+        }
+      }
       healthCounts[category]++;
+
+      // Increment compatibility aliases
+      if (category === 'Tidak Risti') healthCounts['Tidak Risiko Tinggi']++;
+      else if (category === 'Risti Ringan') healthCounts['Risiko Tinggi Ringan']++;
+      else if (category === 'Risti Sedang') healthCounts['Risiko Tinggi Sedang']++;
+      else if (category === 'Risti Berat') healthCounts['Risiko Tinggi Berat']++;
     });
 
     return {
@@ -193,6 +225,15 @@ export async function fetchAhp(model = 'karom') {
  */
 export async function recomputeAhp(body) {
   const res = await api.post('/ahp/compute', body);
+  return res.data;
+}
+
+/**
+ * Reset AHP matrix to default Lampiran 3 expert matrix.
+ * @param {'karom'|'karu'} model
+ */
+export async function resetAhp(model = 'karom') {
+  const res = await api.post('/ahp/reset', null, { params: { model } });
   return res.data;
 }
 
