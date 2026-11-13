@@ -49,7 +49,7 @@ const NAV_ITEMS = [
   {
     id: 'pengujian',
     label: 'Pengujian Sistem',
-    sub: 'Sensitivity, Spearman & Pearson',
+    sub: 'Confusion Matrix & Sensitivitas',
     icon: FlaskConical,
   },
 ];

@@ -699,7 +699,16 @@ def read_evaluation(session: Session = Depends(get_session)):
     saved_matrix = json.loads(setting.matrix_json) if (setting and setting.matrix_json) else None
     target = json.loads(setting.target_json) if (setting and getattr(setting, "target_json", None)) else None
 
+    setting_karu = session.get(AhpSetting, "karu")
+    saved_matrix_karu = json.loads(setting_karu.matrix_json) if (setting_karu and setting_karu.matrix_json) else None
+    target_karu = json.loads(setting_karu.target_json) if (setting_karu and getattr(setting_karu, "target_json", None)) else None
+
     if not jamaah_list:
+        empty_cm_mode = {
+            "tp": 0, "tn": 0, "fp": 0, "fn": 0, "total": 0,
+            "accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1_score": 0.0,
+            "group_comparisons": [], "items": [],
+        }
         return {
             "model": "karom",
             "codes": [],
@@ -716,5 +725,17 @@ def read_evaluation(session: Session = Depends(get_session)):
                 "robust": False,
                 "model": "karom",
             },
+            "confusion_matrix": {
+                "karom": empty_cm_mode,
+                "karu": empty_cm_mode,
+                "gabungan": empty_cm_mode,
+            },
         }
-    return run_evaluation(jamaah_list, criteria_list=criteria_list, saved_matrix=saved_matrix, target=target)
+    return run_evaluation(
+        jamaah_list,
+        criteria_list=criteria_list,
+        saved_matrix=saved_matrix,
+        target=target,
+        saved_matrix_karu=saved_matrix_karu,
+        target_karu=target_karu,
+    )

@@ -85,9 +85,331 @@ def score_with_weights(jamaah_list, codes, w_dict: dict, sub_criteria_map: dict 
     return results
 
 
+# ── Confusion Matrix (Uji Validitas) ──────────────────────────────────────────
+
+def compute_confusion_matrix(
+    jamaah_list,
+    criteria_list: list | None = None,
+    saved_matrix_karom: list | None = None,
+    target_karom: dict | None = None,
+    saved_matrix_karu: list | None = None,
+    target_karu: dict | None = None,
+) -> dict:
+    """
+    Menghitung Confusion Matrix (Uji Validitas) membandingkan rekomendasi sistem
+    (Peringkat #1 per Rombongan/Regu) dengan data pemilihan manual SISKOHAT/Kemenhaj
+    (status_aktual) untuk 3 mode: karom, karu, dan gabungan.
+    """
+    from spk_profile_matching import proses_pm
+
+    # Deterministic kode A001..An based on initial jamaah_list order
+    kode_map = {j.no_porsi: f"A{str(i + 1).zfill(3)}" for i, j in enumerate(jamaah_list)}
+
+    # Run PM for KAROM (6 kriteria) and KARU (4 kriteria)
+    pm_karom = proses_pm(
+        jamaah_list,
+        model="karom",
+        criteria_list=criteria_list,
+        saved_matrix=saved_matrix_karom,
+        target=target_karom,
+    )
+    pm_karu = proses_pm(
+        jamaah_list,
+        model="karu",
+        criteria_list=criteria_list,
+        saved_matrix=saved_matrix_karu,
+        target=target_karu,
+    )
+
+    karom_res = pm_karom["jamaah_results"]
+    karu_res = pm_karu["jamaah_results"]
+
+    # 1. KAROM (Evaluasi per Rombongan)
+    rombs: dict = {}
+    for r in karom_res:
+        romb_id = r.get("rombongan") if r.get("rombongan") is not None else 1
+        rombs.setdefault(romb_id, []).append(r)
+
+    karom_items = []
+    karom_group_comparisons = []
+    karom_tp = karom_tn = karom_fp = karom_fn = 0
+
+    for romb_id in sorted(rombs.keys()):
+        group = sorted(rombs[romb_id], key=lambda x: x["nilai_akhir"], reverse=True)
+        manual_leader = None
+        system_leader = None
+
+        for idx, g in enumerate(group):
+            rank_in_group = idx + 1
+            is_pred_pos = (rank_in_group == 1)
+            pred_label = "4-KAROM" if is_pred_pos else "0-Jamaah"
+
+            st = (g.get("status_aktual") or "").upper()
+            is_act_pos = ("4-KAROM" in st or "KAROM" in st)
+
+            if is_act_pos and is_pred_pos:
+                quadrant = "TP"
+                karom_tp += 1
+            elif not is_act_pos and not is_pred_pos:
+                quadrant = "TN"
+                karom_tn += 1
+            elif not is_act_pos and is_pred_pos:
+                quadrant = "FP"
+                karom_fp += 1
+            else:
+                quadrant = "FN"
+                karom_fn += 1
+
+            karom_items.append({
+                "kode": kode_map.get(g["no_porsi"], f"A{str(idx + 1).zfill(3)}"),
+                "no_porsi": g["no_porsi"],
+                "nama": g["nama"],
+                "rombongan": g.get("rombongan"),
+                "regu": g.get("regu"),
+                "nilai_akhir": g["nilai_akhir"],
+                "rank_in_group": rank_in_group,
+                "status_aktual": g.get("status_aktual") or "0-Jamaah",
+                "prediksi_sistem": pred_label,
+                "quadrant": quadrant,
+            })
+
+            if rank_in_group == 1:
+                system_leader = {
+                    "no_porsi": g["no_porsi"],
+                    "nama": g["nama"],
+                    "nilai_akhir": g["nilai_akhir"],
+                    "rank_in_group": 1,
+                    "status_aktual": g.get("status_aktual") or "0-Jamaah",
+                }
+            if is_act_pos and manual_leader is None:
+                manual_leader = {
+                    "no_porsi": g["no_porsi"],
+                    "nama": g["nama"],
+                    "nilai_akhir": g["nilai_akhir"],
+                    "rank_in_group": rank_in_group,
+                }
+
+        is_match = bool(manual_leader and system_leader and manual_leader["no_porsi"] == system_leader["no_porsi"])
+        karom_group_comparisons.append({
+            "group_id": romb_id,
+            "total_members": len(group),
+            "manual_leader": manual_leader,
+            "system_leader": system_leader,
+            "is_match": is_match,
+        })
+
+    karom_total = karom_tp + karom_tn + karom_fp + karom_fn
+    karom_acc = ((karom_tp + karom_tn) / karom_total * 100.0) if karom_total else 0.0
+    karom_prec = (karom_tp / (karom_tp + karom_fp) * 100.0) if (karom_tp + karom_fp) else 0.0
+    karom_rec = (karom_tp / (karom_tp + karom_fn) * 100.0) if (karom_tp + karom_fn) else 0.0
+    karom_f1 = (2.0 * karom_prec * karom_rec / (karom_prec + karom_rec)) if (karom_prec + karom_rec) else 0.0
+
+    # 2. KARU (Evaluasi per Regu)
+    regus: dict = {}
+    for r in karu_res:
+        regu_id = r.get("regu") if r.get("regu") is not None else 1
+        regus.setdefault(regu_id, []).append(r)
+
+    karu_items = []
+    karu_group_comparisons = []
+    karu_tp = karu_tn = karu_fp = karu_fn = 0
+
+    for regu_id in sorted(regus.keys()):
+        group = sorted(regus[regu_id], key=lambda x: x["nilai_akhir"], reverse=True)
+        manual_leader = None
+        system_leader = None
+
+        for idx, g in enumerate(group):
+            rank_in_group = idx + 1
+            is_pred_pos = (rank_in_group == 1)
+            pred_label = "5-KARU" if is_pred_pos else "0-Jamaah"
+
+            st = (g.get("status_aktual") or "").upper()
+            is_act_pos = ("5-KARU" in st or "KARU" in st)
+
+            if is_act_pos and is_pred_pos:
+                quadrant = "TP"
+                karu_tp += 1
+            elif not is_act_pos and not is_pred_pos:
+                quadrant = "TN"
+                karu_tn += 1
+            elif not is_act_pos and is_pred_pos:
+                quadrant = "FP"
+                karu_fp += 1
+            else:
+                quadrant = "FN"
+                karu_fn += 1
+
+            karu_items.append({
+                "kode": kode_map.get(g["no_porsi"], f"A{str(idx + 1).zfill(3)}"),
+                "no_porsi": g["no_porsi"],
+                "nama": g["nama"],
+                "rombongan": g.get("rombongan"),
+                "regu": g.get("regu"),
+                "nilai_akhir": g["nilai_akhir"],
+                "rank_in_group": rank_in_group,
+                "status_aktual": g.get("status_aktual") or "0-Jamaah",
+                "prediksi_sistem": pred_label,
+                "quadrant": quadrant,
+            })
+
+            if rank_in_group == 1:
+                system_leader = {
+                    "no_porsi": g["no_porsi"],
+                    "nama": g["nama"],
+                    "nilai_akhir": g["nilai_akhir"],
+                    "rank_in_group": 1,
+                    "status_aktual": g.get("status_aktual") or "0-Jamaah",
+                }
+            if is_act_pos and manual_leader is None:
+                manual_leader = {
+                    "no_porsi": g["no_porsi"],
+                    "nama": g["nama"],
+                    "nilai_akhir": g["nilai_akhir"],
+                    "rank_in_group": rank_in_group,
+                }
+
+        is_match = bool(manual_leader and system_leader and manual_leader["no_porsi"] == system_leader["no_porsi"])
+        karu_group_comparisons.append({
+            "group_id": regu_id,
+            "total_members": len(group),
+            "manual_leader": manual_leader,
+            "system_leader": system_leader,
+            "is_match": is_match,
+        })
+
+    karu_total = karu_tp + karu_tn + karu_fp + karu_fn
+    karu_acc = ((karu_tp + karu_tn) / karu_total * 100.0) if karu_total else 0.0
+    karu_prec = (karu_tp / (karu_tp + karu_fp) * 100.0) if (karu_tp + karu_fp) else 0.0
+    karu_rec = (karu_tp / (karu_tp + karu_fn) * 100.0) if (karu_tp + karu_fn) else 0.0
+    karu_f1 = (2.0 * karu_prec * karu_rec / (karu_prec + karu_rec)) if (karu_prec + karu_rec) else 0.0
+
+    # 3. GABUNGAN (Evaluasi Karom & Karu pada Seluruh Jemaah)
+    karom_rank1_porsi = {
+        gc["system_leader"]["no_porsi"]
+        for gc in karom_group_comparisons
+        if gc["system_leader"]
+    }
+    karu_rank1_porsi = {
+        gc["system_leader"]["no_porsi"]
+        for gc in karu_group_comparisons
+        if gc["system_leader"]
+    }
+
+    karom_by_porsi = {it["no_porsi"]: it for it in karom_items}
+    karu_by_porsi = {it["no_porsi"]: it for it in karu_items}
+
+    gab_items = []
+    gab_tp = gab_tn = gab_fp = gab_fn = 0
+
+    for idx, j in enumerate(jamaah_list):
+        porsi = j.no_porsi
+        k_it = karom_by_porsi.get(porsi, {})
+        r_it = karu_by_porsi.get(porsi, {})
+
+        is_k1 = porsi in karom_rank1_porsi
+        is_r1 = porsi in karu_rank1_porsi
+        is_pred_pos = (is_k1 or is_r1)
+
+        if is_k1 and is_r1:
+            pred_label = "4-KAROM & 5-KARU"
+        elif is_k1:
+            pred_label = "4-KAROM"
+        elif is_r1:
+            pred_label = "5-KARU"
+        else:
+            pred_label = "0-Jamaah"
+
+        st = (j.status_aktual or "").upper()
+        is_act_pos = ("4-KAROM" in st or "KAROM" in st or "5-KARU" in st or "KARU" in st)
+
+        if is_act_pos and is_pred_pos:
+            quadrant = "TP"
+            gab_tp += 1
+        elif not is_act_pos and not is_pred_pos:
+            quadrant = "TN"
+            gab_tn += 1
+        elif not is_act_pos and is_pred_pos:
+            quadrant = "FP"
+            gab_fp += 1
+        else:
+            quadrant = "FN"
+            gab_fn += 1
+
+        gab_items.append({
+            "kode": kode_map.get(porsi, f"A{str(idx + 1).zfill(3)}"),
+            "no_porsi": porsi,
+            "nama": j.nama,
+            "rombongan": j.rombongan,
+            "regu": j.regu,
+            "nilai_akhir": k_it.get("nilai_akhir", 0.0),
+            "rank_in_group": k_it.get("rank_in_group", 0),
+            "rank_in_rombongan": k_it.get("rank_in_group", 0),
+            "rank_in_regu": r_it.get("rank_in_group", 0),
+            "status_aktual": j.status_aktual or "0-Jamaah",
+            "prediksi_sistem": pred_label,
+            "quadrant": quadrant,
+        })
+
+    gab_total = gab_tp + gab_tn + gab_fp + gab_fn
+    gab_acc = ((gab_tp + gab_tn) / gab_total * 100.0) if gab_total else 0.0
+    gab_prec = (gab_tp / (gab_tp + gab_fp) * 100.0) if (gab_tp + gab_fp) else 0.0
+    gab_rec = (gab_tp / (gab_tp + gab_fn) * 100.0) if (gab_tp + gab_fn) else 0.0
+    gab_f1 = (2.0 * gab_prec * gab_rec / (gab_prec + gab_rec)) if (gab_prec + gab_rec) else 0.0
+
+    return {
+        "karom": {
+            "tp": karom_tp,
+            "tn": karom_tn,
+            "fp": karom_fp,
+            "fn": karom_fn,
+            "total": karom_total,
+            "accuracy": round(karom_acc, 2),
+            "precision": round(karom_prec, 2),
+            "recall": round(karom_rec, 2),
+            "f1_score": round(karom_f1, 2),
+            "group_comparisons": karom_group_comparisons,
+            "items": karom_items,
+        },
+        "karu": {
+            "tp": karu_tp,
+            "tn": karu_tn,
+            "fp": karu_fp,
+            "fn": karu_fn,
+            "total": karu_total,
+            "accuracy": round(karu_acc, 2),
+            "precision": round(karu_prec, 2),
+            "recall": round(karu_rec, 2),
+            "f1_score": round(karu_f1, 2),
+            "group_comparisons": karu_group_comparisons,
+            "items": karu_items,
+        },
+        "gabungan": {
+            "tp": gab_tp,
+            "tn": gab_tn,
+            "fp": gab_fp,
+            "fn": gab_fn,
+            "total": gab_total,
+            "accuracy": round(gab_acc, 2),
+            "precision": round(gab_prec, 2),
+            "recall": round(gab_rec, 2),
+            "f1_score": round(gab_f1, 2),
+            "group_comparisons": [],
+            "items": gab_items,
+        },
+    }
+
+
 # ── Main evaluation function ───────────────────────────────────────────────────
 
-def run_evaluation(jamaah_list, criteria_list: list | None = None, saved_matrix: list | None = None, target: dict | None = None) -> dict:
+def run_evaluation(
+    jamaah_list,
+    criteria_list: list | None = None,
+    saved_matrix: list | None = None,
+    target: dict | None = None,
+    saved_matrix_karu: list | None = None,
+    target_karu: dict | None = None,
+) -> dict:
     """Run the full evaluation with dynamic criteria, saved matrix, and target profile."""
     from spk_profile_matching import proses_pm
 
@@ -190,6 +512,15 @@ def run_evaluation(jamaah_list, criteria_list: list | None = None, saved_matrix:
     avg_r_total = round(sum(all_r)    / len(all_r),    6) if all_r    else 0.0
     robust      = abs(avg_rs) >= 0.80 and abs(avg_r_total) >= 0.80
 
+    cm = compute_confusion_matrix(
+        jamaah_list,
+        criteria_list=criteria_list,
+        saved_matrix_karom=saved_matrix,
+        target_karom=target,
+        saved_matrix_karu=saved_matrix_karu,
+        target_karu=target_karu,
+    )
+
     return {
         "model":        model,
         "codes":        codes,
@@ -206,4 +537,5 @@ def run_evaluation(jamaah_list, criteria_list: list | None = None, saved_matrix:
             "robust":           robust,
             "model":            model,
         },
+        "confusion_matrix": cm,
     }
