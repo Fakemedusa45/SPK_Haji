@@ -1,9 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   GitCompare, Search, RefreshCw, AlertCircle, CheckCircle2,
-  Pencil, X, ChevronDown, Info, Target, Users,
+  Pencil, X, ChevronDown, Info, Target, Users, RotateCcw,
 } from 'lucide-react';
-import { fetchPm, computePm } from '../services/api';
+import { fetchPm, computePm, resetPmTarget } from '../services/api';
+
+function Toast({ message, type, onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 3500);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  return (
+    <div className={`kr-toast kr-toast-${type}`}>
+      {type === 'success' ? <CheckCircle2 size={16} /> : type === 'info' ? <Info size={16} /> : <AlertCircle size={16} />}
+      <span>{message}</span>
+      <button className="kr-toast-close" onClick={onClose}><X size={14} /></button>
+    </div>
+  );
+}
 
 /* ============================================================
    CONSTANTS
@@ -85,7 +100,7 @@ function EditTargetModal({ codes, labels, target, onSave, onClose }) {
 /* ============================================================
    CARD 1 — Pemetaan Gap
    ============================================================ */
-function GapCard({ jamaah, codes, labels, target, ahpWeights, onEditTarget }) {
+function GapCard({ jamaah, codes, labels, target, ahpWeights, onEditTarget, onResetTarget }) {
   if (!jamaah) return null;
   const { skala, gap, bobot_gap } = jamaah;
 
@@ -101,9 +116,14 @@ function GapCard({ jamaah, codes, labels, target, ahpWeights, onEditTarget }) {
             </p>
           </div>
         </div>
-        <button className="pm-btn-edit-target" onClick={onEditTarget}>
-          <Pencil size={13} /> Edit Target
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button className="pm-btn-edit-target" style={{ background: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1' }} onClick={onResetTarget} title="Reset target ke default (semua 5)">
+            <RotateCcw size={13} /> Reset Target
+          </button>
+          <button className="pm-btn-edit-target" onClick={onEditTarget}>
+            <Pencil size={13} /> Edit Target
+          </button>
+        </div>
       </div>
 
       <div className="pm-table-wrap">
@@ -434,6 +454,11 @@ export default function ProfileMatchingPage() {
   const [selected,    setSelected]    = useState(null);
   const [target,      setTarget]      = useState({});
   const [showEditTarget, setShowEditTarget] = useState(false);
+  const [toast,       setToast]       = useState(null);
+
+  function showToast(message, type = 'success') {
+    setToast({ message, type });
+  }
 
   /* ── Load PM data ── */
   const load = useCallback(async (mdl, tgt = null) => {
@@ -454,7 +479,7 @@ export default function ProfileMatchingPage() {
       } else {
         setSelected(null);
       }
-    } catch (err) {
+    } catch {
       setError('Gagal memuat data. Pastikan backend berjalan dan data jemaah tersedia.');
     } finally {
       setLoading(false);
@@ -472,9 +497,26 @@ export default function ProfileMatchingPage() {
     setShowEditTarget(false);
     setTarget(newTarget);
     await load(model, newTarget);
-    // Re-select same jamaah if still in list
-    if (selected && pmData) {
-      // Will be re-set by load()
+    showToast('Nilai target ideal berhasil disimpan dan disinkronkan ke seluruh sistem!', 'success');
+  }
+
+  /* ── Reset custom target ── */
+  async function handleResetTarget() {
+    if (!window.confirm('Reset nilai target profil ideal kembali ke nilai default (semua = 5)?')) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await resetPmTarget(model);
+      setPmData(data);
+      setTarget(data.target);
+      if (data.jamaah_results?.length > 0) {
+        setSelected(data.jamaah_results[0]);
+      }
+      showToast('Nilai target berhasil dikembalikan ke default (semua = 5).', 'info');
+    } catch {
+      setError('Gagal mereset target.');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -561,6 +603,7 @@ export default function ProfileMatchingPage() {
                 target={target}
                 ahpWeights={weights}
                 onEditTarget={() => setShowEditTarget(true)}
+                onResetTarget={handleResetTarget}
               />
 
               {/* Card 2 — Konversi Gap */}
@@ -591,6 +634,15 @@ export default function ProfileMatchingPage() {
           target={target}
           onSave={handleSaveTarget}
           onClose={() => setShowEditTarget(false)}
+        />
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
         />
       )}
     </div>

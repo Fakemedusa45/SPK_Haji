@@ -41,8 +41,9 @@ function OverviewBanner() {
           <div className="ev-banner-point">
             <span className="ev-bp-num">12</span>
             <div>
-              <strong>Skenario Analisis Sensitivitas</strong> — Modifikasi bobot AHP (+1 dan +2)
-              pada masing-masing kriteria C1–C6, lalu hitung persentase deviasi skor
+              <strong>Skenario Analisis Sensitivitas</strong> — Modifikasi bobot AHP (+5% dan +10%)
+              pada masing-masing kriteria C1–C6 (bobot ditambah, lalu dinormalisasi ulang agar Σwⱼ = 1),
+              lalu hitung persentase deviasi skor
               <em> S% = |Y–X|/X × 100</em> (Persamaan 2.9)
             </div>
           </div>
@@ -121,9 +122,10 @@ function KpiCards({ summary }) {
    SCENARIO DRILL-DOWN MODAL
    ============================================================ */
 function DrilldownModal({ scenario, onClose }) {
-  const { scenario_no, criteria_label, delta, spearman_rs, pearson_r,
+  const { scenario_no, criteria_label, delta, delta_label, spearman_rs, pearson_r,
           avg_sensitivity_pct, category, detail, modified_weights, base_weights } = scenario;
 
+  const dLabel = delta_label || `+${delta}`;
   const codes = Object.keys(modified_weights || {});
 
   return (
@@ -135,7 +137,7 @@ function DrilldownModal({ scenario, onClose }) {
             <div className="ev-modal-icon"><Layers size={16} /></div>
             <div>
               <h3 className="ev-modal-title">
-                Skenario {scenario_no} — Modifikasi {criteria_label} (+{delta})
+                Skenario {scenario_no} — Modifikasi {criteria_label} ({dLabel})
               </h3>
               <p className="ev-modal-sub">
                 Detail perbandingan skor dan peringkat baseline vs simulasi
@@ -309,7 +311,7 @@ function ScenarioTable({ scenarios, onSelect }) {
                   </div>
                 </td>
                 <td className="ev-td ev-td-center">
-                  <span className="ev-delta-chip">+{s.delta}</span>
+                  <span className="ev-delta-chip">{s.delta_label || `+${s.delta}`}</span>
                 </td>
                 <td className="ev-td ev-td-center">
                   <span className="ev-wnorm">

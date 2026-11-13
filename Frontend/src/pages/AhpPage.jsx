@@ -426,7 +426,12 @@ export default function AhpPage() {
       const data = await recomputeAhp({ matrix, labels, codes, model });
       setResult(data);
       setIsDirty(false);
-      showToast('Matriks dan bobot kriteria berhasil disimpan ke sistem!', 'success');
+      if (data.consistent) {
+        showToast('Matriks konsisten (CR ≤ 0.10)! Bobot kriteria berhasil disimpan ke sistem.', 'success');
+      } else {
+        const crStr = typeof data.CR === 'number' ? data.CR.toFixed(4) : '—';
+        showToast(`Perhatian: CR = ${crStr} > 0.10 (Tidak Konsisten). Bobot tidak dikunci ke sistem sampai penilaian direvisi.`, 'error');
+      }
     } catch {
       const local = computeAhpLocal(matrix);
       setResult({ ...local, labels, codes, model });

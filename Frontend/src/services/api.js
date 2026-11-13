@@ -80,7 +80,11 @@ export async function fetchSpkResult() {
  */
 export async function fetchDashboardStats() {
   try {
-    const jamaahList = await fetchJamaahHaji();
+    const [jamaahList, kriterias, ahpData] = await Promise.all([
+      fetchJamaahHaji().catch(() => []),
+      fetchKriteria().catch(() => []),
+      fetchAhp('karom').catch(() => null),
+    ]);
 
     // Compute statistics client-side from raw data
     const total = jamaahList.length;
@@ -154,6 +158,9 @@ export async function fetchDashboardStats() {
       total,
       gender: { male, female },
       health: healthCounts,
+      kriteriaCount: (kriterias && kriterias.length > 0) ? kriterias.length : 6,
+      isConsistent: ahpData ? ahpData.consistent : true,
+      crValue: ahpData ? ahpData.CR : 0,
       jamaahList,
     };
   } catch (error) {
@@ -186,6 +193,12 @@ export async function updateKriteria(id, body) {
 /** Delete a criterion (also cascades sub-criteria). */
 export async function deleteKriteria(id) {
   await api.delete(`/kriteria/${id}`);
+}
+
+/** Reset all criteria and sub-criteria to the 6 default criteria (Lampiran 3). */
+export async function resetKriteriaDefault() {
+  const res = await api.post('/kriteria/reset-default');
+  return res.data;
 }
 
 // ─── Sub-Kriteria ────────────────────────────────────────────────────────────
@@ -254,6 +267,15 @@ export async function fetchPm(model = 'karom') {
  */
 export async function computePm(body) {
   const res = await api.post('/pm/compute', body);
+  return res.data;
+}
+
+/**
+ * Reset Profile Matching target profile back to default (semua = 5).
+ * @param {'karom'|'karu'} model
+ */
+export async function resetPmTarget(model = 'karom') {
+  const res = await api.post('/pm/reset-target', null, { params: { model } });
   return res.data;
 }
 

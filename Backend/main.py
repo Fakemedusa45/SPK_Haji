@@ -59,17 +59,31 @@ DEFAULT_SUB_KRITERIA = {
         {"rentang_nilai": "SD / Lainnya", "keterangan": "Tidak Ideal",  "skor": 1},
     ],
     "C6": [
-        {"rentang_nilai": "Belum Pernah Haji",  "keterangan": "Sangat Ideal",   "skor": 5},
-        {"rentang_nilai": "Batal / Proses",     "keterangan": "Cukup",          "skor": 3},
-        {"rentang_nilai": "Sudah Pernah Haji",  "keterangan": "Tidak Ideal",    "skor": 1},
+        {"rentang_nilai": "Sudah Pernah Haji",  "keterangan": "Sangat Ideal",   "skor": 5},
+        {"rentang_nilai": "Belum Pernah Haji",  "keterangan": "Cukup",          "skor": 3},
+        {"rentang_nilai": "Batal / Proses",     "keterangan": "Tidak Ideal",    "skor": 1},
     ],
 }
 
 
-def seed_kriteria(session: Session):
+def seed_kriteria(session: Session, force: bool = False):
     existing = session.exec(select(Kriteria)).all()
-    if existing:
+    if existing and not force:
         return  # already seeded
+
+    if force:
+        subs = session.exec(select(SubKriteria)).all()
+        for s in subs:
+            session.delete(s)
+        for k in existing:
+            session.delete(k)
+        session.commit()
+
+        # Reset ahp_setting so pairwise matrix starts fresh from expert baseline
+        ahp_settings = session.exec(select(AhpSetting)).all()
+        for a in ahp_settings:
+            session.delete(a)
+        session.commit()
 
     # Fetch AHP weights to attach to default criteria
     try:
@@ -77,24 +91,18 @@ def seed_kriteria(session: Session):
     except Exception:
         weights = {}
 
-    kode_to_weight = {
-        "C1": weights.get("C1"), "C2": weights.get("C2"),
-        "C3": None, "C4": weights.get("C4"),
-        "C5": weights.get("C3"), "C6": weights.get("C5"),
-    }
-
     for item in DEFAULT_KRITERIA:
         kr = Kriteria(
             kode=item["kode"],
             nama=item["nama"],
             scope=item["scope"],
-            bobot=kode_to_weight.get(item["kode"]),
+            bobot=weights.get(item["kode"]),
         )
         session.add(kr)
     session.commit()
 
     # Reload to get IDs
-    all_kr = session.exec(select(Kriteria)).all()
+    all_kr = session.exec(select(Kriteria).order_by(Kriteria.kode.asc())).all()
     kode_to_id = {kr.kode: kr.id for kr in all_kr}
 
     for kode, subs in DEFAULT_SUB_KRITERIA.items():
@@ -370,7 +378,11 @@ def read_spk_result(session: Session = Depends(get_session)):
     ).all()
     if not jamaah_list:
         return {"ahp_weights": {}, "rankings": []}
-    return proses_spk(jamaah_list)
+    criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
+    setting = session.get(AhpSetting, "karom")
+    saved_matrix = json.loads(setting.matrix_json) if (setting and setting.matrix_json) else None
+    saved_target = json.loads(setting.target_json) if (setting and setting.target_json) else None
+    return proses_spk(jamaah_list, criteria_list=criteria_list, saved_matrix=saved_matrix, target=saved_target)
 
 
 # ─── AHP Visualisasi ──────────────────────────────────────────────────────────
@@ -411,22 +423,38 @@ def recompute_ahp(body: AhpComputeRequest, session: Session = Depends(get_sessio
     result["codes"]  = body.codes
     result["model"]  = body.model
 
-    # 1. Save matrix and weights into ahp_setting table so it persists across visits
+    is_consistent = result.get("consistent", False)
+
+    # 1. Save matrix draft into ahp_setting table so edits persist across visits
     setting = session.get(AhpSetting, body.model)
     if not setting:
-        setting = AhpSetting(model=body.model, matrix_json=json.dumps(body.matrix), weights_json=json.dumps(result["weights"]))
+        setting = AhpSetting(model=body.model, matrix_json=json.dumps(body.matrix))
     else:
         setting.matrix_json = json.dumps(body.matrix)
-        setting.weights_json = json.dumps(result["weights"])
-    session.add(setting)
 
-    # 2. Persist updated weights into kriteria table
-    for idx, c in enumerate(body.codes):
-        kr = session.exec(select(Kriteria).where(Kriteria.kode == c)).first()
-        if kr:
-            kr.bobot = result["weights"][idx]
-            session.add(kr)
-    session.commit()
+    if is_consistent:
+        # Only lock and propagate weights when CR <= 0.10
+        setting.weights_json = json.dumps(result["weights"])
+        session.add(setting)
+
+        # 2. Persist updated weights into kriteria table
+        for idx, c in enumerate(body.codes):
+            kr = session.exec(select(Kriteria).where(Kriteria.kode == c)).first()
+            if kr:
+                kr.bobot = result["weights"][idx]
+                session.add(kr)
+        session.commit()
+        result["saved"] = True
+        result["locked"] = True
+        result["message"] = "Matriks konsisten (CR ≤ 0.10). Bobot berhasil dikunci dan disimpan ke database."
+    else:
+        # Inconsistent matrix: save draft matrix, but block locking invalid weights into system
+        session.add(setting)
+        session.commit()
+        result["saved"] = False
+        result["locked"] = False
+        result["message"] = f"Matriks tidak konsisten (CR = {result['CR']:.4f} > 0.10). Bobot tidak dikunci ke sistem sampai matriks diperbaiki."
+
     return result
 
 
@@ -457,7 +485,7 @@ class PmRequest(BaseModel):
 
 @app.get("/pm")
 def read_pm(model: str = "karom", session: Session = Depends(get_session)):
-    """Return full Profile Matching visualisation data."""
+    """Return full Profile Matching visualisation data with persisted custom target."""
     from spk_profile_matching import proses_pm
     jamaah_list = session.exec(
         select(JamaahHaji).order_by(
@@ -469,30 +497,39 @@ def read_pm(model: str = "karom", session: Session = Depends(get_session)):
     criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
     setting = session.get(AhpSetting, model)
     saved_matrix = None
-    if setting and setting.matrix_json:
-        try:
-            saved_matrix = json.loads(setting.matrix_json)
-        except Exception:
-            saved_matrix = None
+    saved_target = None
+    if setting:
+        if setting.matrix_json:
+            try:
+                saved_matrix = json.loads(setting.matrix_json)
+            except Exception:
+                saved_matrix = None
+        if setting.target_json:
+            try:
+                saved_target = json.loads(setting.target_json)
+            except Exception:
+                saved_target = None
+
     if not jamaah_list:
         from spk_ahp import get_dynamic_ahp
         ahp_data = get_dynamic_ahp(model, criteria_list, saved_matrix=saved_matrix)
         codes = ahp_data["codes"]
+        target_val = saved_target or {c: 5 for c in codes}
         return {
             "model": model,
             "codes": codes,
             "labels": ahp_data["labels"],
             "ahp_weights": {codes[i]: ahp_data["weights"][i] for i in range(len(codes))},
-            "target": {c: 5 for c in codes},
+            "target": target_val,
             "gap_bobot_table": {0:5.0, 1:4.5, -1:4.0, 2:3.5, -2:3.0, 3:2.5, -3:2.0, 4:1.5, -4:1.0},
             "jamaah_results": [],
         }
-    return proses_pm(jamaah_list, model=model, criteria_list=criteria_list, saved_matrix=saved_matrix)
+    return proses_pm(jamaah_list, model=model, target=saved_target, criteria_list=criteria_list, saved_matrix=saved_matrix)
 
 
 @app.post("/pm/compute")
 def compute_pm(body: PmRequest, session: Session = Depends(get_session)):
-    """Recompute profile matching with optional custom target."""
+    """Recompute profile matching with custom target and persist target across pages."""
     from spk_profile_matching import proses_pm
     jamaah_list = session.exec(
         select(JamaahHaji).order_by(
@@ -504,12 +541,32 @@ def compute_pm(body: PmRequest, session: Session = Depends(get_session)):
     criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
     setting = session.get(AhpSetting, body.model)
     saved_matrix = None
-    if setting and setting.matrix_json:
-        try:
-            saved_matrix = json.loads(setting.matrix_json)
-        except Exception:
-            saved_matrix = None
+    if not setting:
+        setting = AhpSetting(model=body.model, matrix_json="")
+    else:
+        if setting.matrix_json:
+            try:
+                saved_matrix = json.loads(setting.matrix_json)
+            except Exception:
+                saved_matrix = None
+
+    if body.target:
+        setting.target_json = json.dumps(body.target)
+        session.add(setting)
+        session.commit()
+
     return proses_pm(jamaah_list, model=body.model, target=body.target, criteria_list=criteria_list, saved_matrix=saved_matrix)
+
+
+@app.post("/pm/reset-target")
+def reset_pm_target(model: str = "karom", session: Session = Depends(get_session)):
+    """Reset Profile Matching target profile back to default (all 5)."""
+    setting = session.get(AhpSetting, model)
+    if setting and setting.target_json:
+        setting.target_json = None
+        session.add(setting)
+        session.commit()
+    return read_pm(model=model, session=session)
 
 # ─── Kriteria CRUD ────────────────────────────────────────────────────────────
 
@@ -579,6 +636,13 @@ def delete_kriteria(kr_id: int, session: Session = Depends(get_session)):
     session.commit()
 
 
+@app.post("/kriteria/reset-default", response_model=List[KriteriaWithSubs])
+def reset_kriteria_to_default(session: Session = Depends(get_session)):
+    """Reset all criteria and sub-criteria back to the 6 default criteria and baseline weights."""
+    seed_kriteria(session, force=True)
+    return list_kriteria(session)
+
+
 # ─── Sub-Kriteria CRUD ────────────────────────────────────────────────────────
 
 @app.post("/sub-kriteria", response_model=SubKriteriaRead, status_code=201)
@@ -619,7 +683,7 @@ def read_evaluation(session: Session = Depends(get_session)):
     """
     Run 12-scenario sensitivity analysis (±1 / ±2 on each of C1–C6 for KAROM),
     compute Spearman (rank stability) and Pearson (score linearity) correlations,
-    and return the full result including per-scenario drill-down detail.
+    incorporating dynamic criteria and active AHP weights.
     Subbab 3.8 — Persamaan 2.9 (S%) & Persamaan 2.10 (rₛ).
     """
     from spk_evaluation import run_evaluation
@@ -630,6 +694,11 @@ def read_evaluation(session: Session = Depends(get_session)):
             JamaahHaji.no_porsi.asc()
         )
     ).all()
+    criteria_list = session.exec(select(Kriteria).order_by(Kriteria.id.asc())).all()
+    setting = session.get(AhpSetting, "karom")
+    saved_matrix = json.loads(setting.matrix_json) if (setting and setting.matrix_json) else None
+    target = json.loads(setting.target_json) if (setting and getattr(setting, "target_json", None)) else None
+
     if not jamaah_list:
         return {
             "model": "karom",
@@ -648,4 +717,4 @@ def read_evaluation(session: Session = Depends(get_session)):
                 "model": "karom",
             },
         }
-    return run_evaluation(jamaah_list)
+    return run_evaluation(jamaah_list, criteria_list=criteria_list, saved_matrix=saved_matrix, target=target)

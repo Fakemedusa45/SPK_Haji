@@ -1,9 +1,15 @@
 """
 Pengujian Sistem — Sensitivity Analysis + Spearman + Pearson
-Generates 12 scenarios: +1 and +2 weight modifications on each of C1–C6 (KAROM).
+Generates 12 scenarios: +5% and +10% weight perturbations on each of C1–C6 (KAROM).
+
+Delta values used: 0.05 (5%) and 0.10 (10%) of total normalized weight.
+This follows the standard MCDM sensitivity analysis approach where a small
+perturbation is added to one criterion's weight and the remaining weights are
+re-normalized so that Σwj = 1. Moderate perturbations (5–10%) are common in
+AHP thesis work (e.g. Triantaphyllou & Sanchez 1997, Saltelli 2004).
 """
 import math
-from spk_ahp import get_full_ahp, KAROM_CODES, KAROM_LABELS
+from spk_ahp import get_full_ahp, get_dynamic_ahp, KAROM_CODES, KAROM_LABELS
 from spk_profile_matching import konversi_ke_nilai, hitung_bobot_gap
 
 
@@ -59,39 +65,50 @@ def modified_weights(base_weights: list, mod_idx: int, delta: float) -> list:
     return [v / total for v in w]
 
 
-def score_with_weights(jamaah_list, codes, w_dict: dict) -> list:
-    """Re-score all jamaah using overridden weights."""
-    target = {c: 5 for c in codes}
+def score_with_weights(jamaah_list, codes, w_dict: dict, sub_criteria_map: dict | None = None, target: dict | None = None) -> list:
+    """Re-score all jamaah using overridden weights and matching sub_criteria_map."""
+    if target is None:
+        target = {c: 5 for c in codes}
     results = []
     for jamaah in jamaah_list:
-        skala = konversi_ke_nilai(jamaah)
-        skala_model = {c: skala.get(c, 0) for c in codes}
-        gap = {c: skala_model[c] - target[c] for c in codes}
+        skala = konversi_ke_nilai(jamaah, sub_criteria_map=sub_criteria_map)
+        skala_model = {c: skala.get(c, 3) for c in codes}
+        gap = {c: skala_model[c] - target.get(c, 5) for c in codes}
         bobot_gap = {c: hitung_bobot_gap(gap[c]) for c in codes}
-        nilai_akhir = sum(w_dict[c] * bobot_gap[c] for c in codes)
+        skor_terbobot = {c: round(w_dict[c] * bobot_gap[c], 6) for c in codes}
+        nilai_akhir = round(sum(skor_terbobot[c] for c in codes), 4)
         results.append({
             "no_porsi":    jamaah.no_porsi,
             "nama":        jamaah.nama,
-            "nilai_akhir": round(nilai_akhir, 6),
+            "nilai_akhir": nilai_akhir,
         })
     return results
 
 
 # ── Main evaluation function ───────────────────────────────────────────────────
 
-def run_evaluation(jamaah_list) -> dict:
-    """Run the full 12-scenario evaluation."""
+def run_evaluation(jamaah_list, criteria_list: list | None = None, saved_matrix: list | None = None, target: dict | None = None) -> dict:
+    """Run the full evaluation with dynamic criteria, saved matrix, and target profile."""
     from spk_profile_matching import proses_pm
 
     model    = "karom"
-    codes    = KAROM_CODES
-    labels   = KAROM_LABELS
-    ahp_data = get_full_ahp(model)
+    ahp_data = get_dynamic_ahp(model, criteria_list=criteria_list, saved_matrix=saved_matrix)
+    codes    = ahp_data["codes"]
+    labels   = ahp_data["labels"]
     base_w   = ahp_data["weights"]   # list[float]
     base_dict = {codes[i]: base_w[i] for i in range(len(codes))}
 
+    sub_criteria_map = {}
+    if criteria_list:
+        for kr in criteria_list:
+            if getattr(kr, "sub_kriterias", None):
+                sub_criteria_map[kr.kode] = kr.sub_kriterias
+
+    if target is None:
+        target = {c: 5 for c in codes}
+
     # Baseline rankings
-    base_pm  = proses_pm(jamaah_list, model=model)
+    base_pm  = proses_pm(jamaah_list, model=model, criteria_list=criteria_list, saved_matrix=saved_matrix, target=target)
     base_res = base_pm["jamaah_results"]  # sorted desc by nilai_akhir
     n = len(base_res)
     porsi_order  = [r["no_porsi"] for r in base_res]  # baseline rank-1 first
@@ -101,11 +118,12 @@ def run_evaluation(jamaah_list) -> dict:
     scenario_no = 1
 
     for ci, code in enumerate(codes):
-        for delta in [1, 2]:
+        for delta in [0.05, 0.10]:
+            delta_label = "+5%" if delta == 0.05 else "+10%"
             new_w_list = modified_weights(base_w, ci, delta)
             new_w_dict = {codes[i]: new_w_list[i] for i in range(len(codes))}
 
-            sim_results = score_with_weights(jamaah_list, codes, new_w_dict)
+            sim_results = score_with_weights(jamaah_list, codes, new_w_dict, sub_criteria_map=sub_criteria_map, target=target)
             sim_sorted  = sorted(sim_results, key=lambda x: x["nilai_akhir"], reverse=True)
             sim_rank_map  = {r["no_porsi"]: (idx + 1) for idx, r in enumerate(sim_sorted)}
             sim_score_map = {r["no_porsi"]: r["nilai_akhir"]  for r in sim_sorted}
@@ -151,6 +169,7 @@ def run_evaluation(jamaah_list) -> dict:
                 "criteria_modified":   code,
                 "criteria_label":      labels[ci],
                 "delta":               delta,
+                "delta_label":         delta_label,
                 "base_weights":        {c: round(base_dict[c], 6) for c in codes},
                 "modified_weights":    {c: round(new_w_dict[c], 6) for c in codes},
                 "rank1_candidate":     rank1_candidate,

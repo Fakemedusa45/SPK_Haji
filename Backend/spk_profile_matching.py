@@ -31,9 +31,10 @@ def hitung_bobot_gap(gap: int) -> float:
     return GAP_BOBOT.get(gap, 0.0)
 
 
-def konversi_ke_nilai(jamaah: JamaahHaji) -> dict:
+def konversi_ke_nilai(jamaah: JamaahHaji, sub_criteria_map: dict | None = None) -> dict:
     """
-    Konversi field jamaah ke skor integer 1–5 sesuai rules data.xlsx (SISKOHAT).
+    Konversi field jamaah ke skor integer 1–5 sesuai rules data.xlsx (SISKOHAT)
+    dan dinamis mengikuti skor sub-kriteria di database jika tersedia.
 
     C1 Usia          — dari tanggal_lahir, referensi tahun 2026
     C2 Kesehatan     — dari kolom 'Status Risti' (tersimpan di field kesehatan)
@@ -42,66 +43,94 @@ def konversi_ke_nilai(jamaah: JamaahHaji) -> dict:
     C5 Pendidikan    — dari kolom 'Pendidikan' (nilai exact SISKOHAT, khusus KAROM)
     C6 Status Haji   — dari kolom 'Status Haji' (Sudah / Belum, khusus KAROM)
     """
+    subs = sub_criteria_map or {}
+
+    # Helper: ambil skor dari sub-kriteria database berdasarkan keyword
+    def _get_sub_skor(kode: str, keyword: str, default_val: int) -> int:
+        if kode in subs:
+            for s in subs[kode]:
+                r = (getattr(s, "rentang_nilai", "") or "").lower()
+                k = (getattr(s, "keterangan", "") or "").lower()
+                if keyword in r or keyword in k:
+                    return getattr(s, "skor", default_val)
+        return default_val
+
     # ── C1: Usia ────────────────────────────────────────────────────────────
     umur = hitung_umur(jamaah.tanggal_lahir)
-    if   40 <= umur <= 50: c1 = 5   # Sangat Ideal
-    elif 30 <= umur <= 39: c1 = 4   # Ideal
-    elif 51 <= umur <= 60: c1 = 3   # Cukup
-    elif umur < 30:        c1 = 2   # Kurang Ideal
-    else:                  c1 = 1   # Tidak Disarankan (> 60, Lansia)
+    if 40 <= umur <= 50:
+        c1 = _get_sub_skor("C1", "40", 5)
+    elif 30 <= umur <= 39:
+        c1 = _get_sub_skor("C1", "30", 4)
+    elif 51 <= umur <= 60:
+        c1 = _get_sub_skor("C1", "50", 3)
+    elif umur < 30:
+        c1 = _get_sub_skor("C1", "< 30", 2)
+    else:
+        c1 = _get_sub_skor("C1", "60", 1)
 
     # ── C2: Kesehatan (dari Status Risti) ───────────────────────────────────
     kes = jamaah.kesehatan.strip().lower()
-    if   "tidak risti" in kes or "tidak risiko" in kes: c2 = 5  # Sangat Baik
-    elif "ringan" in kes:                               c2 = 4  # Baik
-    elif "sedang" in kes:                               c2 = 3  # Cukup
-    elif "berat" in kes:                                c2 = 1  # Kurang
-    else:                                               c2 = 3  # fallback Cukup
+    if "tidak risti" in kes or "tidak risiko" in kes or "sehat" in kes or "istitha" in kes:
+        c2 = _get_sub_skor("C2", "tidak", 5)
+    elif "ringan" in kes:
+        c2 = _get_sub_skor("C2", "ringan", 4)
+    elif "sedang" in kes or "pendampingan" in kes:
+        c2 = _get_sub_skor("C2", "sedang", 3)
+    elif "berat" in kes or "resti" in kes:
+        c2 = _get_sub_skor("C2", "berat", 1)
+    else:
+        c2 = 3
 
     # ── C3: Jenis Kelamin ───────────────────────────────────────────────────
     jk = jamaah.jenis_kelamin.strip().upper()
-    if   jk in ("L", "LAKI-LAKI"):   c3 = 5   # Sangat Sesuai
-    elif jk in ("P", "PEREMPUAN"):   c3 = 3   # Kurang Sesuai
-    else:                             c3 = 3
+    if jk in ("L", "LAKI-LAKI"):
+        c3 = _get_sub_skor("C3", "laki", 5)
+    elif jk in ("P", "PEREMPUAN"):
+        c3 = _get_sub_skor("C3", "perempuan", 3)
+    else:
+        c3 = 3
 
     # ── C4: Pekerjaan ───────────────────────────────────────────────────────
     pek = jamaah.pekerjaan.strip().lower()
     if any(x in pek for x in ["tni", "polri", "pegawai negri sipil",
                                "pegawai negeri", "pns", "asn"]):
-        c4 = 5   # Sangat Baik
+        c4 = _get_sub_skor("C4", "pns", 5)
     elif any(x in pek for x in ["bumn", "bumd", "guru", "dosen"]):
-        c4 = 4   # Baik
+        c4 = _get_sub_skor("C4", "guru", 4)
     elif any(x in pek for x in ["swasta", "dagang", "wiraswasta"]):
-        c4 = 3   # Cukup
+        c4 = _get_sub_skor("C4", "swasta", 3)
     elif any(x in pek for x in ["tani", "nelayan", "petani", "buruh",
                                  "pensiunan", "lainnya"]):
-        c4 = 2   # Kurang
+        c4 = _get_sub_skor("C4", "tani", 2)
     elif any(x in pek for x in ["ibu rumah tangga", "pelajar",
                                  "mahasiswa", "tidak bekerja"]):
-        c4 = 1   # Sangat Kurang
+        c4 = _get_sub_skor("C4", "tidak", 1)
     else:
-        c4 = 2   # fallback
+        c4 = 2
 
     # ── C5: Pendidikan ──────────────────────────────────────────────────────
     pend = jamaah.pendidikan.strip().lower()
     if any(x in pend for x in ["s3", "s2", "s1"]):
-        c5 = 5   # Sangat Baik
+        c5 = _get_sub_skor("C5", "s1", 5)
     elif any(x in pend for x in ["d1", "d2", "d3", "d4", " sm", "diploma"]):
-        c5 = 4   # Baik
+        c5 = _get_sub_skor("C5", "d3", 4)
     elif any(x in pend for x in ["slta", "sma", "smk"]):
-        c5 = 3   # Cukup
+        c5 = _get_sub_skor("C5", "sma", 3)
     elif any(x in pend for x in ["sltp", "smp"]):
-        c5 = 2   # Kurang
+        c5 = _get_sub_skor("C5", "smp", 2)
     elif any(x in pend for x in ["sd", "tidak tamat"]):
-        c5 = 1   # Sangat Kurang
+        c5 = _get_sub_skor("C5", "sd", 1)
     else:
-        c5 = 1   # fallback
+        c5 = 1
 
     # ── C6: Status Haji ─────────────────────────────────────────────────────
     st = jamaah.status_haji.strip().lower()
-    if   "sudah" in st or "pernah" in st: c6 = 5   # Sangat Ideal
-    elif "belum" in st:                   c6 = 3   # Cukup
-    else:                                 c6 = 3
+    if "sudah" in st or "pernah" in st:
+        c6 = _get_sub_skor("C6", "sudah", 5)
+    elif "belum" in st:
+        c6 = _get_sub_skor("C6", "belum", 3)
+    else:
+        c6 = _get_sub_skor("C6", "batal", 1)
 
     res = {"C1": c1, "C2": c2, "C3": c3, "C4": c4, "C5": c5, "C6": c6}
     if getattr(jamaah, "nilai_tambahan", None):
@@ -124,31 +153,25 @@ def proses_pm(jamaah_list: list, model: str = "karom",
               saved_matrix: list | None = None) -> dict:
     """
     Full Profile Matching computation, incorporating dynamic criteria and saved matrix.
-
-    Parameters
-    ----------
-    jamaah_list   : list[JamaahHaji]
-    model         : 'karom' | 'karu'
-    target        : override target profile; defaults to semua-5
-    criteria_list : list[Kriteria] from database (optional)
-    saved_matrix  : custom saved AHP matrix (optional)
-
-    Returns
-    -------
-    dict dengan model, codes, labels, ahp_weights, target, gap_bobot_table,
-    jamaah_results (sorted desc by nilai_akhir, dengan rank)
     """
     ahp_data = get_dynamic_ahp(model, criteria_list, saved_matrix=saved_matrix)
     codes    = ahp_data["codes"]
     weights  = {codes[i]: ahp_data["weights"][i] for i in range(len(codes))}
     labels   = ahp_data["labels"]
 
+    # Build sub-criteria map if criteria_list is available
+    sub_criteria_map = {}
+    if criteria_list:
+        for kr in criteria_list:
+            if getattr(kr, "sub_kriterias", None):
+                sub_criteria_map[kr.kode] = kr.sub_kriterias
+
     if target is None:
         target = {c: 5 for c in codes}
 
     results = []
     for jamaah in jamaah_list:
-        skala       = konversi_ke_nilai(jamaah)
+        skala       = konversi_ke_nilai(jamaah, sub_criteria_map=sub_criteria_map)
         skala_model = {c: skala.get(c, 3) for c in codes}
         gap         = {c: skala_model[c] - target.get(c, 5) for c in codes}
         bobot_gap   = {c: hitung_bobot_gap(gap[c])   for c in codes}
@@ -184,9 +207,10 @@ def proses_pm(jamaah_list: list, model: str = "karom",
     }
 
 
-def proses_spk(jamaah_list: list):
-    """Legacy wrapper — returns KAROM results."""
-    data = proses_pm(jamaah_list, model="karom")
+def proses_spk(jamaah_list: list, criteria_list: list | None = None,
+               saved_matrix: list | None = None, target: dict | None = None):
+    """Wrapper — returns KAROM results incorporating dynamic criteria and saved matrix/target."""
+    data = proses_pm(jamaah_list, model="karom", criteria_list=criteria_list, saved_matrix=saved_matrix, target=target)
     return {
         "ahp_weights": data["ahp_weights"],
         "rankings": [

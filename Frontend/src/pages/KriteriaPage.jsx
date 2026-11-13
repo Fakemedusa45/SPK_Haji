@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, Pencil, Trash2, ChevronDown, ChevronUp,
-  Sliders, AlertCircle, Info, CheckCircle2, X,
+  Sliders, AlertCircle, Info, CheckCircle2, X, RotateCcw,
 } from 'lucide-react';
 import {
   fetchKriteria,
   createKriteria, updateKriteria, deleteKriteria,
   createSubKriteria, updateSubKriteria, deleteSubKriteria,
+  resetKriteriaDefault,
 } from '../services/api';
 
 /* ============================================================
@@ -284,6 +285,51 @@ function ConfirmModal({ message, onConfirm, onClose, loading }) {
   );
 }
 
+function ResetDefaultModal({ onConfirm, onClose, loading }) {
+  return (
+    <div className="kr-modal-backdrop" onClick={onClose}>
+      <div className="kr-modal kr-modal-sm" onClick={e => e.stopPropagation()}>
+        <div className="kr-modal-header">
+          <h3>Kembalikan 6 Kriteria Default</h3>
+          <button className="kr-modal-close" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="kr-modal-body">
+          <div className="kr-confirm-icon" style={{ background: '#fef3c7', color: '#d97706' }}>
+            <RotateCcw size={28} />
+          </div>
+          <p className="kr-confirm-msg">
+            Apakah Anda yakin ingin mengembalikan data kriteria ke <strong>6 kriteria bawaan sistem (C1–C6)</strong>?
+          </p>
+          <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '10px 14px', fontSize: '12.5px', color: '#475569', margin: '12px 0', border: '1px solid #e2e8f0', textAlign: 'left', lineHeight: 1.5 }}>
+            <strong>Kriteria yang akan dipulihkan:</strong>
+            <ul style={{ paddingLeft: '18px', marginTop: '6px', marginBottom: 0 }}>
+              <li><strong>C1:</strong> Usia (KAROM & KARU)</li>
+              <li><strong>C2:</strong> Kesehatan (KAROM & KARU)</li>
+              <li><strong>C3:</strong> Jenis Kelamin (KAROM & KARU)</li>
+              <li><strong>C4:</strong> Pekerjaan (KAROM & KARU)</li>
+              <li><strong>C5:</strong> Pendidikan (Khusus KAROM)</li>
+              <li><strong>C6:</strong> Status Haji (Khusus KAROM)</li>
+            </ul>
+            <div style={{ marginTop: '8px', color: '#64748b' }}>
+              Seluruh sub-kriteria standar dan bobot prioritas AHP pakar awal (Lampiran 3) akan dipulihkan secara otomatis.
+            </div>
+          </div>
+          <div className="kr-modal-footer">
+            <button className="kr-btn kr-btn-ghost" onClick={onClose}>Batal</button>
+            <button
+              className="kr-btn kr-btn-primary"
+              onClick={onConfirm}
+              disabled={loading}
+            >
+              {loading ? 'Memulihkan…' : 'Ya, Pulihkan 6 Kriteria'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================
    SUB-KRITERIA TABLE
    ============================================================ */
@@ -496,6 +542,7 @@ export default function KriteriaPage() {
   const [krModal, setKrModal]       = useState(null);
   const [subModal, setSubModal]     = useState(null);
   const [delModal, setDelModal]     = useState(null);
+  const [resetModal, setResetModal] = useState(false);
 
   /* ── Data Loading ── */
   const loadData = useCallback(async () => {
@@ -561,6 +608,24 @@ export default function KriteriaPage() {
     } catch (err) {
       console.error(err);
       showToast('Gagal menghapus kriteria.', 'error');
+    } finally {
+      setMutLoading(false);
+    }
+  }
+
+  async function handleResetDefault() {
+    try {
+      setMutLoading(true);
+      const data = await resetKriteriaDefault();
+      setKriterias(data);
+      setResetModal(false);
+      if (data.length > 0) {
+        setOpenCards(new Set([String(data[0].id)]));
+      }
+      showToast('6 kriteria default (C1–C6) dan seluruh sub-kriteria berhasil dipulihkan.');
+    } catch (err) {
+      console.error(err);
+      showToast('Gagal memulihkan kriteria default.', 'error');
     } finally {
       setMutLoading(false);
     }
@@ -643,12 +708,21 @@ export default function KriteriaPage() {
             </p>
           </div>
         </div>
-        <button
-          className="kr-btn kr-btn-primary"
-          onClick={() => setKrModal({ mode: 'add' })}
-        >
-          <Plus size={16} /> Tambah Kriteria
-        </button>
+        <div className="kr-page-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            className="kr-btn kr-btn-secondary"
+            onClick={() => setResetModal(true)}
+            title="Kembalikan ke 6 kriteria default bawaan sistem (C1–C6)"
+          >
+            <RotateCcw size={15} /> Kembalikan 6 Kriteria Default
+          </button>
+          <button
+            className="kr-btn kr-btn-primary"
+            onClick={() => setKrModal({ mode: 'add' })}
+          >
+            <Plus size={16} /> Tambah Kriteria
+          </button>
+        </div>
       </div>
 
       {/* ── Tip Banner ── */}
@@ -709,6 +783,14 @@ export default function KriteriaPage() {
           }
           onConfirm={delModal.type === 'kr' ? handleDeleteKriteria : handleDeleteSubKriteria}
           onClose={() => setDelModal(null)}
+          loading={mutLoading}
+        />
+      )}
+
+      {resetModal && (
+        <ResetDefaultModal
+          onConfirm={handleResetDefault}
+          onClose={() => setResetModal(false)}
           loading={mutLoading}
         />
       )}

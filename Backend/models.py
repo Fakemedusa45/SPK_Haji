@@ -75,4 +75,5 @@ class AhpSetting(SQLModel, table=True):
     model: str = Field(primary_key=True, max_length=20, description="karom atau karu")
     matrix_json: str = Field(description="JSON serialized pairwise matrix")
     weights_json: Optional[str] = Field(default=None, description="JSON serialized weights")
+    target_json: Optional[str] = Field(default=None, description="JSON serialized target profile, e.g. {'C1': 5, 'C2': 4}")
 

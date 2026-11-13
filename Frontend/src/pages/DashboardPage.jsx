@@ -278,16 +278,16 @@ export default function DashboardPage() {
         <MetricCard
           icon={SlidersHorizontal}
           iconColor="indigo"
-          value="6 Kriteria"
+          value={`${stats.kriteriaCount || 6} Kriteria`}
           label="Kriteria Aktif"
           sub="C1–C6 Configuration (KAROM: 6, KARU: 4)"
         />
         <MetricCard
           icon={Activity}
-          iconColor="amber"
-          value="Siap"
+          iconColor={stats.isConsistent !== false ? "amber" : "rose"}
+          value={stats.isConsistent !== false ? "Siap" : "Perlu Revisi"}
           label="Status Analisis"
-          sub="AHP & Profile Matching konsisten (CR ≤ 0.1)"
+          sub={stats.isConsistent !== false ? "AHP & Profile Matching konsisten (CR ≤ 0.1)" : `CR = ${stats.crValue ? stats.crValue.toFixed(4) : '—'} > 0.10 (Revisi Matriks)`}
         />
       </div>
 
